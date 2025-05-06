@@ -1,0 +1,144 @@
+########################################################################################################
+Pipeline to go from raw 18sV4 reads from IMR core to ASV table and rep seqs
+Steps:
+1) check for primers in raw data
+2) load into QIIME2
+2a) Denoise with DADA2
+2b) Cluster 0.99% OTUs
+2c) Export OTU table, rep seps. To load into R
+This is all run using a virtual terminal session at https://greatlakes.arc-ts.umich.edu/pun/sys/dashboard/batch_connect/sessions
+Here I am in the scratch folder. Be sure to have all sequence data in scratch and backed up in Turbo
+/scratch/tyjames_root/tyjames0/qmoon/Antrim-Shale-Microbiome
+########################################################################################################
+
+
+
+########################################################################################################
+Step 1 
+########################################################################################################
+#Check if primers are present in a sequencing file. Lets check for the forward primer in both the R1 and R2 reads
+#here i use [ATCG] as a bash compatible version of Y and R in primer sequences
+grep -c --color C[ATCG]GCGGTAATTCCAGCTC ../AS_Moon18sV4/*.fastq.gz
+
+#let check reverse primer just in case
+grep -c --color A[ATCG]GGTATCT[ATCG]ATC[ATCG]TCTT[ATCG]G ../AS_Moon18sV4/*.fastq.gz
+
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+RESULTS: 
+- No primers found, must have been removed by the core
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+
+########################################################################################################
+Step 2 
+########################################################################################################
+#activate QIIME2 conda environment. To set up QIIME2 environement on cluster, see https://docs.qiime2.org/2024.10/install/native/
+conda activate qiime2-amplicon-2024.10
+
+
+----------------------------
+#2) IMPORT DEMULTIPLEXED DATA
+----------------------------
+#import sequence data to QIIME, uses manifest.tsv to locate forward and reverse reads.
+#Phred33 is standard illumina quality score
+qiime tools import \
+  --type 'SampleData[PairedEndSequencesWithQuality]' \
+  --input-path AS_18s_manifest.tsv \
+  --input-format PairedEndFastqManifestPhred33V2 \
+  --output-path imported-paired-end-seqs_18s.qza
+
+
+#CREATE a summary of demultiplexed data
+qiime demux summarize \
+  --i-data imported-paired-end-seqs_18s.qza \
+  --o-visualization demux_18s.qzv
+
+#Upload .qzv file to https://view.qiime2.org/ to visualize results
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+RESULTS: 
+- For both forward and reverse primers. Have identical numbers, which makes sense
+-Total reads: 65890, mean: 3467.8, median: 792
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+----------------------------
+#2a) Denoise DADA2
+----------------------------
+#reminder: forward is left and reverse is right
+#I am choosing to run DADA2 in QIIME2 becuase I like the combined plots of PHRED score by base position
+#I am choosing these trunc parameters as they are where the median Phred score dips below 30 (for a sustained period)
+
+
+#Lets try with and without trunc
+#truncate
+ qiime dada2 denoise-paired \
+  --i-demultiplexed-seqs imported-paired-end-seqs_18s.qza \
+  --p-trim-left-f 5 \
+  --p-trunc-len-f 260 \
+  --p-trim-left-r 7 \
+  --p-trunc-len-r 210 \
+  --o-representative-sequences rep-seqs_18s_trunc.qza \
+  --o-table table_18s_trunc.qza \
+  --o-denoising-stats denoising-stats_18s_trunc.qza \
+  --p-n-threads 0 
+
+  qiime metadata tabulate \
+  --m-input-file denoising-stats_18s_trunc.qza\
+  --o-visualization dada2-stats-summ_18s_trunc.qzv
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+RESULTS: 
+- 19 samples sequenced
+- Tried many parameters and these work best. In total about 70% of data ends up kept and merged. 
+-these parameters keep about 60-80% of reads through filtering, merge, and chimera check.
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+
+----------------------------
+#2b) CLUSTER OTU using vsearch
+----------------------------
+
+#Here I am choosing 0.99 similarity. Such little variation between species with 18s V4
+#CLUSTER OTUs by using vsearch de novo
+qiime vsearch cluster-features-de-novo \
+  --i-table table_18s_trunc.qza  \
+  --i-sequences rep-seqs_18s_trunc.qza \
+  --p-perc-identity 0.99 \
+  --o-clustered-table table-clustered_0.99_18s.qza \
+  --o-clustered-sequences rep-seqs-clustered_0.99_18s.qza
+
+#SUMMARIZE and view summaries of the FeatureTable (OTU table) and FeatureData (representative seqs)
+qiime feature-table summarize \
+  --i-table table-clustered_0.99_18s.qza \
+  --m-sample-metadata-file ../AS_Microbiome_Metadata.tsv \
+  --o-visualization table-clustered_0.99_18s.qza
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+RESULTS: 
+-Number of samples: 19
+-Number of 99% OTUs:  393
+-Total frequency of OTUs: 33,277
+#if we bin at 1.0 and leave as ASV, we end up with 524 ASVs
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+----------------------------
+#2b) Export OTU table, rep seqs
+----------------------------
+#write out OTU Table
+qiime tools export \
+--input-path table-clustered_0.99_18s.qza \
+--output-path OTU_table
+
+#convert from QIIME format to TSV
+biom convert -i OTU_table/feature-table.biom \
+-o OTU_table/18s_OTU_table.tsv --to-tsv
+
+#write out rep seqs of OTUs, final format is .fasta
+qiime tools export \
+--input-path rep-seqs-clustered_0.99_18s.qza \
+--output-path rep-seqs

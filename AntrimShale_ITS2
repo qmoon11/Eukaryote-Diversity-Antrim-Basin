@@ -1,0 +1,157 @@
+########################################################################################################
+Pipeline to go from raw fungal ITS2 reads from IMR core to OTU table and rep seqs
+Steps:
+1) check for primers in raw data
+2) load into QIIME2
+2a) Denoise with DADA2
+2b) Cluster 0.98% OTUs
+2c) Export OTU table, rep seps. To load into R
+This is all run using a virtual terminal session at https://greatlakes.arc-ts.umich.edu/pun/sys/dashboard/batch_connect/sessions
+Here I am in the scratch folder. Be sure to have all sequence data in scratch and backed up in Turbo
+/scratch/tyjames_root/tyjames0/qmoon/Antrim-Shale-Microbiome
+########################################################################################################
+
+
+########################################################################################################
+Step 1 
+########################################################################################################
+#Check if primers are present in a sequencing file. Lets check for the forward primer in both the R1 and R2 reads
+grep -c --color GTGAATCATCGAATCTTTGAA ../AS_MoonITS2/*.fastq.gz
+
+#let check reverse primer just in case
+grep -c --color TCCTCCGCTTATTGATATGC ../AS_MoonITS2/*.fastq.gz
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+RESULTS: 
+- No primers found, must have been removed by the core
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+########################################################################################################
+Step 2 
+########################################################################################################
+#activate QIIME2 conda environment. To set up QIIME2 environement on cluster, see https://docs.qiime2.org/2024.10/install/native/
+conda activate qiime2-amplicon-2024.10
+
+
+----------------------------
+#IMPORT DEMULTIPLEXED DATA
+----------------------------
+
+qiime tools import \
+  --type 'SampleData[PairedEndSequencesWithQuality]' \
+  --input-path AS_ITS2_manifest.tsv \
+  --input-format PairedEndFastqManifestPhred33V2 \
+  --output-path imported-paired-end-seqs_ITS2.qza
+
+
+#CREATE a summary of demultiplexed data
+qiime demux summarize \
+  --i-data imported-paired-end-seqs_ITS2.qza \
+  --o-visualization demux_ITS2.qzv
+
+#Upload .qzv file to https://view.qiime2.org/
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+RESULTS: 
+- For both forward and reverse primers. Have identical numbers, which makes sense
+-Total reads: 75537, mean: 3975.6, median: 1885.0
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+
+----------------------------
+#Denoise DADA2
+----------------------------
+#reminder: forward is left and reverse is right
+#I am choosing to run DADA2 in QIIME2 becuase I like the combined plots of PHRED score by base position
+#I am choosing these trunc parameters as they are where the median Phred score dips below 30 (for a sustained period)
+
+ qiime dada2 denoise-paired \
+  --i-demultiplexed-seqs imported-paired-end-seqs_ITS2.qza \
+  --p-trim-left-f 5 \
+  --p-trunc-len-f 210 \
+  --p-trim-left-r 7 \
+  --p-trunc-len-r 170 \
+  --o-representative-sequences rep-seqs_ITS2.qza \
+  --o-table table_ITS2.qza \
+  --o-denoising-stats denoising-stats_ITS2.qza \
+  --p-n-threads 0 
+
+  qiime metadata tabulate \
+  --m-input-file denoising-stats_ITS2.qza\
+  --o-visualization dada2-stats-summ_ITS2.qzv
+
+#SUMMARIZE and view summaries of the FeatureTable (OTU table) and FeatureData (representative seqs)
+qiime feature-table summarize \
+  --i-table table_ITS2.qza \
+  --o-visualization table_ITS2.qza \
+  --m-sample-metadata-file ../AS_Microbiome_Metadata.tsv
+ 
+
+
+  ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+RESULTS: 
+- 19 samples sequenced
+- Tried many parameters and these work best. In total about 70% of data ends up kept and merged. 
+-these parameters keep about 60-75% of reads through filtering, merge, and chimera check.
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+#################################################################################
+CLUSTER OTU
+#################################################################################
+#CLUSTER OTUs by using vsearch de novo
+qiime vsearch cluster-features-de-novo \
+  --i-table table_ITS2.qza  \
+  --i-sequences rep-seqs_ITS2.qza \
+  --p-perc-identity 0.98 \
+  --o-clustered-table table-clustered_ITS2.qza \
+  --o-clustered-sequences rep-seqs-clustered_ITS2.qza
+
+
+
+#SUMMARIZE and view summaries of the FeatureTable (OTU table) and FeatureData (representative seqs)
+qiime feature-table summarize \
+  --i-table table-clustered_ITS2.qza \
+  --m-sample-metadata-file ../AS_Microbiome_Metadata.tsv \
+  --o-visualization table-clustered_ITS2.qza
+
+  ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+RESULTS: 
+- Denovo clustering of 19 reduced samples to 776 97% OTUs
+- total frequency of 49,623
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+----------------------------
+#2b) Export OTU table, rep seqs
+----------------------------
+#write out OTU Table
+qiime tools export \
+--input-path table-clustered_ITS2.qza \
+--output-path OTU_table
+
+#convert from QIIME format to TSV
+biom convert -i OTU_table/feature-table.biom \
+-o OTU_table/ITS2_OTU_table.tsv --to-tsv
+
+#write out rep seqs of OTUs, final format is .fasta
+qiime tools export \
+--input-path rep-seqs-clustered_ITS2.qza \
+--output-path rep-seqs
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
