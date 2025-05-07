@@ -1,0 +1,27 @@
+# Step 1: Create a BLAST database from the Sanger sequences
+# Creates a nucleotide BLAST database from the input FASTA file.
+
+makeblastdb -in Antrim6-24_Isolates.fasta -dbtype nucl -out sanger_db
+
+
+# Step 2: Run BLASTN to compare query sequences against the Sanger database
+# Compares the query sequences to the Sanger database, filters for 98% identity, and outputs results in tabular format.
+
+blastn -query rep-seqs/dna-sequences.fasta \
+       -db sanger_db \
+       -out blast_results.tsv \
+       -outfmt "6 qseqid sseqid pident length mismatch gapopen evalue bitscore" \
+       -perc_identity 98
+
+
+# Step 3: Calculate sequence lengths and count occurrences of each length
+# Calculates and counts the lengths of sequences in the query FASTA file.
+
+awk '/^>/ {if (seqlen){print seqlen}; seqlen=0; next} {seqlen += length($0)} END {print seqlen}' rep-seqs/dna-sequences.fasta | sort -n | uniq -c
+
+
+# Step 4: Filter BLAST results by alignment length (only keep results with length >= 150)
+# Filters the BLAST results to keep only those with an alignment length (column 4) >= 150, and writes to a new file.
+
+awk '$4 >= 150' blast_results.tsv > filtered_hits_150bp.tsv
+
