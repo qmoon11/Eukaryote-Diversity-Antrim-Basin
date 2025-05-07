@@ -1,0 +1,22 @@
+#This script is run in the command line interface in the HPC to set up the blast search.
+
+# Download the BLAST+ software package (version 2.16.0) for 64-bit Linux
+wget https://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/LATEST/ncbi-blast-2.16.0+-x64-linux.tar.gz
+
+# Extract the downloaded .tar.gz file
+tar -xvzf ncbi-blast-2.16.0+-x64-linux.tar.gz
+
+# Change directory to the BLAST installation folder
+cd ncbi-blast-2.16.0+/
+
+# Add the BLAST executables to the system PATH
+export PATH=$(pwd)/bin:$PATH
+
+# Step 1: Create a BLAST database from the Unite General Euk FASTA sequence file (v10)
+
+
+
+makeblastdb \
+  -in sh_general_release_dynamic_s_all_19.02.2025.fasta \
+  -dbtype nucl \
+  -out unite_db
