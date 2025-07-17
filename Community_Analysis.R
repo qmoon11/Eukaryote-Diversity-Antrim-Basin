@@ -1418,9 +1418,9 @@ ggsave("combined_ITS_plot.svg",
        width = 15, height = 15, units = "in", device = "svg", limitsize = FALSE)
 
 #### Metacoder ITS ####
-# Remove OTUs from the taxonomy table that belong to the phylum "Anthophyta"
+# only keep fungi
 taxonomy_ITS_meta <- taxonomy_ITS %>%
-  filter(phylum != "Anthophyta")
+  filter(kingdom == "Fungi")
 
 # Keep only OTUs in the OTU table that are still present in the filtered taxonomy table
 OTU_table_ITS_meta <- OTU_table_ITS %>%
