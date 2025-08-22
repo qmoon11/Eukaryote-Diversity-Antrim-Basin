@@ -93,10 +93,10 @@ salinity <- ggplot(metadata, aes(x = Depth..m.)) +
   
   # Spearman stats near bottom right inside plot
   annotate("text", x = depth_max_95pct, y = TDS_annotation_y1,
-           label = paste0("TDS: ρ = ", tds_rho, ", p = ", tds_p),
+           label = bquote("TDS:" ~ rho == .(tds_rho) * "," ~ p == .(tds_p)),
            hjust = 1, size = 4, color = "blue") +
   annotate("text", x = depth_max_95pct, y = TDS_annotation_y2,
-           label = paste0("Cl: ρ = ", cl_rho, ", p = ", cl_p),
+           label = bquote("Cl:" ~ rho == .(cl_rho) * "," ~ p == .(cl_p)),
            hjust = 1, size = 4, color = "red") +
   
   # Theme with black axis labels size 14
@@ -110,7 +110,7 @@ salinity <- ggplot(metadata, aes(x = Depth..m.)) +
     axis.text = element_text(color = "black")
   )
 
-#salinity
+salinity
 
 
 # ----- pH -----
@@ -129,7 +129,7 @@ pH <- ggplot(metadata, aes(x = Depth..m.)) +
   scale_fill_manual(name = "Sample", values = custom_fills) +
   labs(x = "Depth Below Surface (m)", y = "pH") +
   annotate("text", x = 556.26, y = 7.93, 
-           label = paste0("Spearman ρ = ", pH_rho, "\n p = ", pH_p),
+           label = bquote("" ~ rho == .(round(pH_rho, 2)) * "," ~ p == .(format.pval(pH_p, digits = 2))),
            hjust = 1, vjust = 1, size = 4, color = "black") +
   theme_minimal() +
   theme(
@@ -137,7 +137,7 @@ pH <- ggplot(metadata, aes(x = Depth..m.)) +
     panel.border = element_rect(color = "black", fill = NA, size = 1),
     axis.title = element_text(size = 14, color = "black")  # <--- set axis title size here
   )
-#pH
+pH
 # ----- Temp -----
 # Spearman correlation for temperature vs depth
 temp_cor <- cor.test(metadata$Depth..m., metadata$temperature, method = "spearman")
@@ -166,9 +166,9 @@ temp <- ggplot(metadata, aes(x = Depth..m.)) +
   
   # Spearman annotation (top-right)
   annotate("text", x = x_max, y = y_max, 
-           label = paste0("Spearman \u03C1 = ", temp_rho, "\n p = ", temp_p),
+           label = bquote("" ~ rho == .(round(temp_rho, 2)) * "," ~ p == .(format.pval(temp_p, digits = 2))),
            hjust = 1, vjust = 1, size = 4, color = "black") +
-  
+
   # Theme adjustments
   theme_minimal() +
   theme(
@@ -178,7 +178,7 @@ temp <- ggplot(metadata, aes(x = Depth..m.)) +
     axis.text = element_text(color = "black")
   )
 
-#temp
+temp
 
 
 
@@ -202,7 +202,7 @@ TDN <- ggplot(metadata, aes(x = Depth..m.)) +
   scale_fill_manual(name = "BNG Well", values = custom_fills) +
   labs(x = "Depth Below Surface (m)", y = "TDN (mg/L)") +
   annotate("text", x = x_max, y = y_min, 
-           label = paste0("Spearman ρ = ", TDN_rho, "\n p = ", TDN_p),
+           label = bquote("" ~ rho == .(round(TDN_rho, 2)) * "," ~ p == .(format.pval(TDN_p, digits = 2))),
            hjust = 1, vjust = 0, size = 4, color = "black") +
   theme_minimal() +
   theme(
@@ -211,7 +211,7 @@ TDN <- ggplot(metadata, aes(x = Depth..m.)) +
     axis.title = element_text(size = 14, color = "black"),
     axis.text = element_text(color = "black")
   )
-#TDN
+TDN
 
 
 #### Water Isotope Analysis ####
@@ -480,5 +480,6 @@ combined_plot_6panel <- combined_plot_6panel + plot_layout(heights = c(1, 1, 1, 
 ggsave("combined_geochem.pdf",
        plot = combined_plot_6panel,
        width = 18, height = 24, units = "in", device = "pdf", limitsize = FALSE)
+
 
 
