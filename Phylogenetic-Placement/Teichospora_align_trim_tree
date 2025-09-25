@@ -1,0 +1,43 @@
+#This file will take in the combines LSU and ITS FASTA files and 1) Align with MAFFT 2) Trim with #TrimAl 3)Concatenate into a Supermatrix 4) Build tree with IQ-TREE
+
+#I am electing to run this on my local computer as few taxa and only 2 genes
+
+
+### -----------------------------------------
+### STEP 1: Align each combined FASTA 
+### -----------------------------------------
+brew install mafft  #install mafft if needed
+
+#align with default parameters
+#LSU
+mafft --auto Teichospora_LSU_combined.fasta > Teichospora_LSU_aligned.fasta
+
+#ITS
+mafft --auto Teichospora_ITS_combined.fasta > Teichospora_ITS_aligned.fasta
+
+### -----------------------------------------
+### STEP 2: Trim Alingment
+### -----------------------------------------
+brew install trimal #install trimal
+
+#trim with default parameters
+#LSU
+trimal -in Teichospora_LSU_aligned.fasta -out Teichospora_LSU_trimmed.fasta -automated1
+
+#ITS
+trimal -in Teichospora_ITS_aligned.fasta -out Teichospora_ITS_trimmed.fasta -automated1
+
+
+### -----------------------------------------
+### Concatenate into a Supermatrix
+### -----------------------------------------
+
+#I had difficulty configuring amas so lets try SuperMatrix
+#export at Phylip
+#make partion file 
+
+
+### -----------------------------------------
+### IQ-Tree Tree Building
+### -----------------------------------------
+./iqtree-3.0.1-macOS/bin/iqtree3 -s Teichospora_SuperMatrix.phy -p Teichospora_partition.txt -m MFP -bb 1000 -nt AUTO
