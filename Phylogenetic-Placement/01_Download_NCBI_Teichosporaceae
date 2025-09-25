@@ -33,42 +33,26 @@ echo "EDirect installed and configured."
 #   NC_000913.3
 #   MN908947.3
 
-# If your file is not already in place, create it manually before running this script.
-
 ### -----------------------------------------
 ### STEP 4: Fetch FASTA Sequences and Combine
 ### -----------------------------------------
-
-INPUT_FILE="Teichosporaceae_LSU"
-OUTPUT_FILE="Teichosporaceae_LSU_combined.fasta"
-
-echo "Fetching FASTA sequences from NCBI..."
-echo "Input: $INPUT_FILE"
-echo "Output: $OUTPUT_FILE"
-
-# Remove old output file if it exists
-rm -f "$OUTPUT_FILE"
-
-# Loop through each accession and fetch FASTA
+#ITS
 while read acc; do
-  echo "Fetching: $acc"
-  efetch -db nucleotide -id "$acc" -format fasta >> "$OUTPUT_FILE"
-done < "$INPUT_FILE"
+  efetch -db nucleotide -id "$acc" -format fasta >> Downloads/Antrim_Microbiome/Teichospora_ITS_combined.fasta
+done < Downloads/Antrim_Microbiome/Teichospora_ITS.txt
 
-echo "✅ All sequences downloaded and combined into $OUTPUT_FILE"
+#LSU
+while read acc; do
+  efetch -db nucleotide -id "$acc" -format fasta >> Downloads/Antrim_Microbiome/Teichospora_LSU_combined.fasta
+done < Downloads/Antrim_Microbiome/Teichospora_LSU.txt
 
-### -----------------------------------------
-### STEP 5: Preview Combined FASTA
-### -----------------------------------------
-
-echo "Preview of combined FASTA:"
-head "$OUTPUT_FILE"
-
-# Optional: Open in TextEdit
-# open -a TextEdit "$OUTPUT_FILE"
+#I then manually added Horn_10 ITS and LSU sequences to respective combined FASTA
 
 
 
+
+
+######### Notes
 # Here is the logic I used to select taxa and sequences to include in the tree.
 # These lists of LSU and ITS sequences are saved in plain text files and used to pull sequences from NCBI.
 #
