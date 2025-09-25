@@ -47,6 +47,7 @@ while read acc; do
 done < Downloads/Antrim_Microbiome/Teichospora_LSU.txt
 
 #I then manually added Horn_10 ITS and LSU sequences to respective combined FASTA
+#I also manually adjust FASTA headers in each file to match for supermatrix.  genus_species_strain ie. (>Teichospora_austroafricana_CBS_119330) 
 
 
 
