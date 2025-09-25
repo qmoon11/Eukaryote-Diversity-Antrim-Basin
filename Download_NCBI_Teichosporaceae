@@ -1,0 +1,124 @@
+#This script details how to download the NCBI sequence tool. And the scripts used to pull relevant #sequences for the phylogeny of Teichospora in Teichosporaceae
+
+
+#!/bin/zsh
+
+### -----------------------------------------
+### STEP 1: Install Entrez Direct (EDirect)
+### -----------------------------------------
+echo "Installing Entrez Direct (EDirect)..."
+
+sh -c "$(curl -fsSL https://ftp.ncbi.nlm.nih.gov/entrez/entrezdirect/install-edirect.sh)"
+
+### -----------------------------------------
+### STEP 2: Add EDirect to PATH
+### -----------------------------------------
+
+# Add EDirect to your shell path if not already added
+echo 'export PATH=$HOME/edirect:$PATH' >> ~/.zshrc
+
+# Apply the change immediately for this session
+export PATH=$HOME/edirect:$PATH
+
+echo "EDirect installed and configured."
+
+### -----------------------------------------
+### STEP 3: Prepare Accession List
+### -----------------------------------------
+
+# You should already have a file like this with your accession numbers
+# One accession per line
+# Example: Teichosporaceae_LSU
+# Contents might look like:
+#   NC_000913.3
+#   MN908947.3
+
+# If your file is not already in place, create it manually before running this script.
+
+### -----------------------------------------
+### STEP 4: Fetch FASTA Sequences and Combine
+### -----------------------------------------
+
+INPUT_FILE="Teichosporaceae_LSU"
+OUTPUT_FILE="Teichosporaceae_LSU_combined.fasta"
+
+echo "Fetching FASTA sequences from NCBI..."
+echo "Input: $INPUT_FILE"
+echo "Output: $OUTPUT_FILE"
+
+# Remove old output file if it exists
+rm -f "$OUTPUT_FILE"
+
+# Loop through each accession and fetch FASTA
+while read acc; do
+  echo "Fetching: $acc"
+  efetch -db nucleotide -id "$acc" -format fasta >> "$OUTPUT_FILE"
+done < "$INPUT_FILE"
+
+echo "✅ All sequences downloaded and combined into $OUTPUT_FILE"
+
+### -----------------------------------------
+### STEP 5: Preview Combined FASTA
+### -----------------------------------------
+
+echo "Preview of combined FASTA:"
+head "$OUTPUT_FILE"
+
+# Optional: Open in TextEdit
+# open -a TextEdit "$OUTPUT_FILE"
+
+
+
+# Here is the logic I used to select taxa and sequences to include in the tree.
+# These lists of LSU and ITS sequences are saved in plain text files and used to pull sequences from NCBI.
+#
+# Pull Teichosporaceae LSU sequences from GenBank.
+# 
+# Teichosporaceae taxa were selected based on:
+# - "Biphasic taxonomic approaches for generic relatedness and phylogenetic relationships of Teichosporaceae"
+# - "Teichospora and the Teichosporaceae"
+# - "Taxonomy and phylogeny of dematiaceous coelomycetes"
+#
+# Additional genera of interest included:
+# - Magnibotryascoma and Aurantiascoma 
+
+#LSU sequences to put in txt file
+EU552115
+EU552116
+GU385212
+JN712520
+JN712521
+KY173557
+EU552117
+KU601592
+KU601593
+KU601591
+KU848206.1
+GU301813
+GU479785
+KU144917
+KU144920
+MW424784
+MF173429
+KR611898
+
+
+#grab same ITS sequences to put in txt file
+EU552115
+EU552116
+JN712456
+JN712457
+KY173468
+EU552117
+KU601586
+KU601592
+KU601593
+KU601591
+KU144917
+KU144920
+MW424769
+MF173433
+KR611877
+
+#While making this list, record the Taxa names, strains, and gen. bank acc numbers in a excel file
+
