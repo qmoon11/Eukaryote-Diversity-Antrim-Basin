@@ -40,4 +40,5 @@ trimal -in Teichospora_ITS_aligned.fasta -out Teichospora_ITS_trimmed.fasta -aut
 ### -----------------------------------------
 ### IQ-Tree Tree Building
 ### -----------------------------------------
+#partition model allows for seperate models for each gene
 ./iqtree-3.0.1-macOS/bin/iqtree3 -s Teichospora_SuperMatrix.phy -p Teichospora_partition.txt -m MFP -bb 1000 -nt AUTO
