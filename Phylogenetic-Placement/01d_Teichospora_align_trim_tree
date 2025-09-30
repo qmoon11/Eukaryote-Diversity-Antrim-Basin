@@ -32,7 +32,7 @@ trimal -in Teichospora_ITS_aligned.fasta -out Teichospora_ITS_trimmed.fasta -aut
 ### Concatenate into a Supermatrix
 ### -----------------------------------------
 
-#I had difficulty configuring amas so lets try SuperMatrix
+#I had difficulty configuring amas so lets try SequenceMatrix-1.10
 #export at Phylip
 #make partion file 
 
