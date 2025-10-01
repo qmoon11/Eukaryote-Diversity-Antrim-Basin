@@ -36,17 +36,13 @@ echo "EDirect installed and configured."
 ### -----------------------------------------
 ### STEP 4: Fetch FASTA Sequences and Combine
 ### -----------------------------------------
-#ITS
-while read acc; do
-  efetch -db nucleotide -id "$acc" -format fasta >> Downloads/Antrim_Microbiome/Teichospora_ITS_combined.fasta
-done < Downloads/Antrim_Microbiome/Teichospora_ITS.txt
 
 #LSU
 while read acc; do
   efetch -db nucleotide -id "$acc" -format fasta >> Downloads/Antrim_Microbiome/Teichospora_LSU_combined.fasta
 done < Downloads/Antrim_Microbiome/Teichospora_LSU.txt
 
-#I then manually added Horn_10 ITS and LSU sequences to respective combined FASTA
+#I then manually added Horn_10 LSU sequences to respective combined FASTA
 #I also manually adjust FASTA headers in each file to match for supermatrix.  genus_species_strain ie. (>Teichospora_austroafricana_CBS_119330) 
 #It is a good idea to manually check headers as many have old genera name and other issues
 
@@ -65,8 +61,7 @@ done < Downloads/Antrim_Microbiome/Teichospora_LSU.txt
 # - "Teichospora and the Teichosporaceae"
 # - "Taxonomy and phylogeny of dematiaceous coelomycetes"
 #
-# Additional genera of interest included:
-# - Magnibotryascoma and Aurantiascoma 
+
 
 #LSU sequences to put in txt file
 EU552115
@@ -79,32 +74,22 @@ EU552117
 KU601592
 KU601593
 KU601591
-KU848206.1
-GU301813
+KU601580
+GU385165
+KY173558
+MH107966
+GQ925847.1
 GU479785
-KU144917
-KU144920
+GU301813
+KU848206.1
 MW424784
-MF173429
 KR611898
+U43479
+GU385194
+GU385211
+KP888647
+NG_027595.1
 
-
-#grab same ITS sequences to put in txt file
-EU552115
-EU552116
-JN712456
-JN712457
-KY173468
-EU552117
-KU601586
-KU601592
-KU601593
-KU601591
-KU144917
-KU144920
-MW424769
-MF173433
-KR611877
 
 #While making this list, record the Taxa names, strains, and gen. bank acc numbers in a excel file
 
