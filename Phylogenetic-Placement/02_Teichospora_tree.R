@@ -1,3 +1,5 @@
+#Read in IQTree, improve tip labels, root, color and save as PDF
+
 #### Load Packages ####
 library(ape)
 library(ggtree)
