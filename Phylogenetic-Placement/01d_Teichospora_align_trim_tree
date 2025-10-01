@@ -1,6 +1,6 @@
-#This file will take in the combines LSU and ITS FASTA files and 1) Align with MAFFT 2) Trim with #TrimAl 3)Concatenate into a Supermatrix 4) Build tree with IQ-TREE
+#This file will take in the combine the LSU files and 1) Align with MAFFT 2) Trim with #TrimAl 3) Build tree with IQ-TREE
 
-#I am electing to run this on my local computer as few taxa and only 2 genes
+#I am electing to run this on my local computer as few taxa and only 1 gene
 
 
 ### -----------------------------------------
@@ -12,9 +12,6 @@ brew install mafft  #install mafft if needed
 #LSU
 mafft --auto Teichospora_LSU_combined.fasta > Teichospora_LSU_aligned.fasta
 
-#ITS
-mafft --auto Teichospora_ITS_combined.fasta > Teichospora_ITS_aligned.fasta
-
 ### -----------------------------------------
 ### STEP 2: Trim Alingment
 ### -----------------------------------------
@@ -24,27 +21,11 @@ brew install trimal #install trimal
 #LSU
 trimal -in Teichospora_LSU_aligned.fasta -out Teichospora_LSU_trimmed.fasta -automated1
 
-#ITS
-trimal -in Teichospora_ITS_aligned.fasta -out Teichospora_ITS_trimmed.fasta -automated1
-
-
-### -----------------------------------------
-### Concatenate into a Supermatrix
-### -----------------------------------------
-
-#I had difficulty configuring amas so lets try SequenceMatrix-1.10
-#export at Phylip
-#make partion file 
 
 
 ### -----------------------------------------
 ### IQ-Tree Tree Building
 ### -----------------------------------------
-#partition model allows for seperate models for each gene
-./iqtree-3.0.1-macOS/bin/iqtree3 -s Teichospora_SuperMatrix.phy -p Teichospora_partition.txt -m MFP -bb 1000 -nt AUTO
-
-
-
 
 ./iqtree-3.0.1-macOS/bin/iqtree3 \
   -s Teichospora_LSU_trimmed.fasta \
