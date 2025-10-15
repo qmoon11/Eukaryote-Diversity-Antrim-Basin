@@ -72,6 +72,13 @@ TDS_range <- max(metadata$TDS, na.rm = TRUE) - TDS_min
 TDS_annotation_y1 <- TDS_min + 0.05 * TDS_range    # 5% above min (near bottom)
 TDS_annotation_y2 <- TDS_min + 0.10 * TDS_range    # 10% above min
 
+
+x_ann <- depth_max_95pct + 0.05 * diff(range(metadata$Depth..m.))   # move right by 5% of depth range
+y1_ann <- TDS_annotation_y1 - 0.05 * diff(range(metadata$TDS))      # move down by 5% of TDS range
+y2_ann <- TDS_annotation_y2 - 0.05 * diff(range(metadata$TDS))      # move down by 5% of TDS range
+
+
+
 salinity <- ggplot(metadata, aes(x = Depth..m.)) +
   # Linear fits
   geom_smooth(aes(y = TDS), method = "lm", se = FALSE, color = "blue", size = 1) +
@@ -91,26 +98,36 @@ salinity <- ggplot(metadata, aes(x = Depth..m.)) +
   ) +
   labs(x = "Depth Below Surface (m)") +
   
-  # Spearman stats near bottom right inside plot
-  annotate("text", x = depth_max_95pct, y = TDS_annotation_y1,
-           label = bquote("TDS:" ~ rho == .(tds_rho) * "," ~ p == .(tds_p)),
-           hjust = 1, size = 4, color = "blue") +
-  annotate("text", x = depth_max_95pct, y = TDS_annotation_y2,
-           label = bquote("Cl:" ~ rho == .(cl_rho) * "," ~ p == .(cl_p)),
-           hjust = 1, size = 4, color = "red") +
+  # Spearman stats annotation with intermediate font size, correct rho symbol, and moved
+  annotate("text", x = x_ann, y = y1_ann,
+           label = bquote("TDS: " ~ rho == .(tds_rho) * ", p = " * .(tds_p)),
+           hjust = 1, size = 5.5, color = "blue") +
+  annotate("text", x = x_ann, y = y2_ann,
+           label = bquote("Cl: " ~ rho == .(cl_rho) * ", p = " * .(cl_p)),
+           hjust = 1, size = 5.5, color = "red") +
   
-  # Theme with black axis labels size 14
   theme_minimal() +
   theme(
-    panel.grid = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, size = 1),
-    axis.title.x = element_text(size = 14, color = "black"),
-    axis.title.y.left = element_text(color = "blue", size = 14),
-    axis.title.y.right = element_text(color = "red", size = 14),
-    axis.text = element_text(color = "black")
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    
+    axis.title.x = element_text(size = 18, color = "black"),
+    axis.title.y.left = element_text(color = "blue", size = 18),
+    axis.title.y.right = element_text(color = "red", size = 18),
+    axis.text.x = element_text(size = 16, color = "black"),
+    axis.text.y = element_text(size = 16, color = "black"),
+    
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    
+    legend.title = element_text(size = 18),
+    legend.text  = element_text(size = 16),
+    legend.key.size = grid::unit(1.2, "cm"),
+    
+    plot.margin = margin(5, 5, 5, 5)
   )
-
-salinity
+#salinity
 
 
 # ----- pH -----
@@ -128,16 +145,28 @@ pH <- ggplot(metadata, aes(x = Depth..m.)) +
   scale_shape_manual(name = "Sample", values = custom_shapes) +
   scale_fill_manual(name = "Sample", values = custom_fills) +
   labs(x = "Depth Below Surface (m)", y = "pH") +
-  annotate("text", x = 556.26, y = 7.93, 
-           label = bquote("" ~ rho == .(round(pH_rho, 2)) * "," ~ p == .(format.pval(pH_p, digits = 2))),
-           hjust = 1, vjust = 1, size = 4, color = "black") +
+  annotate(
+    "text", x = 556.26, y = 7.93,
+    label = bquote(rho == .(pH_rho) * ",  p = " * .(pH_p)),
+    hjust = 1, vjust = 1, size = 5.5, color = "black"
+  ) +
   theme_minimal() +
   theme(
-    panel.grid = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, size = 1),
-    axis.title = element_text(size = 14, color = "black")  # <--- set axis title size here
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.title.x = element_text(size = 18, color = "black"),
+    axis.title.y = element_text(size = 18, color = "black"),
+    axis.text.x = element_text(size = 16, color = "black"),
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.title = element_text(size = 18),
+    legend.text  = element_text(size = 16),
+    legend.key.size = grid::unit(1.2, "cm"),
+    plot.margin = margin(5, 5, 5, 5)
   )
-pH
+#pH
 # ----- Temp -----
 # Spearman correlation for temperature vs depth
 temp_cor <- cor.test(metadata$Depth..m., metadata$temperature, method = "spearman")
@@ -164,21 +193,32 @@ temp <- ggplot(metadata, aes(x = Depth..m.)) +
   # Axis labels
   labs(x = "Depth Below Surface (m)", y = "Temperature (°C)") +
   
-  # Spearman annotation (top-right)
-  annotate("text", x = x_max, y = y_max, 
-           label = bquote("" ~ rho == .(round(temp_rho, 2)) * "," ~ p == .(format.pval(temp_p, digits = 2))),
-           hjust = 1, vjust = 1, size = 4, color = "black") +
-
-  # Theme adjustments
+  # Spearman annotation (top-right) with intermediate font size and correct rho
+  annotate(
+    "text", x = x_max, y = y_max,
+    label = bquote(rho == .(temp_rho) * ",  p = " * .(temp_p)),
+    hjust = 1, vjust = 1, size = 5.5, color = "black"
+  ) +
+  
+  # Theme adjustments for style consistency
   theme_minimal() +
   theme(
-    panel.grid = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, size = 1),
-    axis.title = element_text(size = 14, color = "black"),
-    axis.text = element_text(color = "black")
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.title.x = element_text(size = 18, color = "black"),
+    axis.title.y = element_text(size = 18, color = "black"),
+    axis.text.x = element_text(size = 16, color = "black"),
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.title = element_text(size = 18),
+    legend.text  = element_text(size = 16),
+    legend.key.size = grid::unit(1.2, "cm"),
+    plot.margin = margin(5, 5, 5, 5)
   )
 
-temp
+#temp
 
 
 
@@ -201,17 +241,28 @@ TDN <- ggplot(metadata, aes(x = Depth..m.)) +
   scale_shape_manual(name = "BNG Well", values = custom_shapes) +
   scale_fill_manual(name = "BNG Well", values = custom_fills) +
   labs(x = "Depth Below Surface (m)", y = "TDN (mg/L)") +
-  annotate("text", x = x_max, y = y_min, 
-           label = bquote("" ~ rho == .(round(TDN_rho, 2)) * "," ~ p == .(format.pval(TDN_p, digits = 2))),
-           hjust = 1, vjust = 0, size = 4, color = "black") +
+  annotate(
+    "text", x = x_max, y = y_min, 
+    label = bquote(rho == .(TDN_rho) * ",  p = " * .(TDN_p)),
+    hjust = 1, vjust = 0, size = 5.5, color = "black"
+  ) +
   theme_minimal() +
   theme(
-    panel.grid = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, size = 1),
-    axis.title = element_text(size = 14, color = "black"),
-    axis.text = element_text(color = "black")
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.title.x = element_text(size = 18, color = "black"),
+    axis.title.y = element_text(size = 18, color = "black"),
+    axis.text.x = element_text(size = 16, color = "black"),
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.title = element_text(size = 18),
+    legend.text  = element_text(size = 16),
+    legend.key.size = grid::unit(1.2, "cm"),
+    plot.margin = margin(5, 5, 5, 5)
   )
-TDN
+#TDN
 
 
 #### Water Isotope Analysis ####
@@ -293,24 +344,33 @@ water_isotope <- ggplot() +
     y = expression(delta^{2}*H~"(‰ VSMOW)")
   ) +
   
-  # Inline legend items
+  # Inline legend items with increased label size
   annotate("segment", x = -5, xend = -3, y = -130, yend = -130, color = "blue", size = 1.2) +
-  annotate("text", x = -2.8, y = -130, label = "GMWL", hjust = 0, size = 4) +
+  annotate("text", x = -2.8, y = -130, label = "GMWL", hjust = 0, size = 5.5) +
   geom_point(aes(x = -5, y = -137), shape = 21, fill = "red", color = "black", size = 3, stroke = 1) +
-  annotate("text", x = -4.2, y = -137, label = "This Study", hjust = 0, size = 4) +
+  annotate("text", x = -4.2, y = -137, label = "This Study", hjust = 0, size = 5.5) +
   geom_point(aes(x = -5, y = -144), shape = 21, fill = NA, color = "black", size = 3, stroke = 1) +
-  annotate("text", x = -4.2, y = -144, label = "Published Antrim Basin Values", hjust = 0, size = 4) +
+  annotate("text", x = -4.2, y = -144, label = "Published Antrim Basin Values", hjust = 0, size = 5.5) +
+  
+  # Set axis limits so max is 0
+  scale_x_continuous(limits = c(NA, 0)) +
+  scale_y_continuous(limits = c(NA, 0)) +
   
   theme_minimal() +
   theme(
-    panel.grid = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, size = 1),
-    axis.title = element_text(size = 14, color = "black"),
-    axis.text = element_text(color = "black")
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.title.x = element_text(size = 18, color = "black"),
+    axis.title.y = element_text(size = 18, color = "black"),
+    axis.text.x = element_text(size = 16, color = "black"),
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = margin(5, 5, 5, 5)
   )
 
-# Output the plot
-#water_isotope
+water_isotope
 
 
 #### Carbon Isotope ####
@@ -349,10 +409,19 @@ carbon_isotope <- ggplot(metadata, aes(x = d13CH4, y = d13C02, shape = Sample, f
   
   theme_minimal() +
   theme(
-    panel.grid = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, size = 1),
-    axis.title = element_text(size = 14, color = "black"),
-    axis.text = element_text(color = "black")
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.title.x = element_text(size = 18, color = "black"),
+    axis.title.y = element_text(size = 18, color = "black"),
+    axis.text.x = element_text(size = 16, color = "black"),
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.title = element_text(size = 18),
+    legend.text  = element_text(size = 16),
+    legend.key.size = grid::unit(1.2, "cm"),
+    plot.margin = margin(5, 5, 5, 5)
   )
 
 carbon_isotope
@@ -387,7 +456,7 @@ tapp_plot <- ggplot(metadata_tapp, aes(x = Depth..m., y = Tapp)) +
   geom_point(aes(shape = Sample, fill = Sample),
              size = 3, color = "black", stroke = 1) +
   
-  # Custom styling
+  # Custom styling, no legend for shape/fill
   scale_shape_manual(values = custom_shapes, guide = "none") +
   scale_fill_manual(values = custom_fills, guide = "none") +
   
@@ -399,12 +468,17 @@ tapp_plot <- ggplot(metadata_tapp, aes(x = Depth..m., y = Tapp)) +
   
   theme_minimal() +
   theme(
-    panel.grid = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, size = 1),
-    axis.title = element_text(size = 14, color = "black"),
-    axis.text = element_text(color = "black")
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.title.x = element_text(size = 18, color = "black"),
+    axis.title.y = element_text(size = 18, color = "black"),
+    axis.text.x = element_text(size = 16, color = "black"),
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.margin = margin(5, 5, 5, 5)
   )
-
 #tapp_plot
 
 
@@ -434,30 +508,42 @@ site_legend <- cowplot::get_legend(
 )
 
 # Build a dummy plot for Gas Origin legend
+site_legend <- cowplot::get_legend(
+  TDN +
+    guides(shape = guide_legend(ncol = 1)) +
+    theme(
+      legend.position = "right",
+      legend.title = element_text(size = 18),
+      legend.text  = element_text(size = 16),
+      legend.key.width = unit(1.2, "cm"),
+      legend.key.height = unit(1.2, "cm"),
+      legend.spacing.y = unit(0.4, "cm")
+    )
+)
+
 gas_origin_legend_plot <- ggplot(data.frame(x = 1, y = 1, Origin = c("Biogenic", "Thermogenic")),
                                  aes(x = x, y = y, fill = Origin)) +
   geom_tile() +
   scale_fill_manual(
     name = "Gas Origin",
     values = c(
-      "Biogenic" = alpha("forestgreen", 0.6),    # 60% opacity
+      "Biogenic" = alpha("forestgreen", 0.6),
       "Thermogenic" = alpha("gray40", 0.6)
     )
   ) +
   theme_void() +
   theme(
-    legend.position = "right",              # vertical legend on right
-    legend.title = element_text(size = 12),
-    legend.text = element_text(size = 10),
-    legend.key.width = unit(1.2, "lines"),
+    legend.position = "right",
+    legend.title = element_text(size = 18),
+    legend.text  = element_text(size = 16),
+    legend.key.width = unit(1.2, "cm"),
+    legend.key.height = unit(1.2, "cm"),
     legend.spacing.y = unit(0.4, "cm")
   ) +
-  guides(fill = guide_legend(ncol = 1))    # force vertical legend
+  guides(fill = guide_legend(ncol = 1))
 
-# Extract gas origin legend
 gas_legend <- cowplot::get_legend(gas_origin_legend_plot)
 
-# Combine both legends vertically
 combined_legends <- plot_grid(site_legend, gas_legend, ncol = 2, rel_heights = c(1, 1))
 
 combined_plot_6panel <- (
@@ -467,19 +553,17 @@ combined_plot_6panel <- (
     ((water_isotope | combined_legends) + plot_layout(widths = c(3, 1)))
 ) +
   plot_annotation(
-    tag_levels = list(c("(A)  1.", "2.", "3.", "4.", "(B)", "(C)", "(D)")),
-    theme = theme(plot.tag = element_text(size = 35, face = "bold"))
+    tag_levels = list(c("(A)  1.", "(A)  2.", "(A)  3.", "(A)  4.", "(B)", "(C)", "(D)"))
   ) &
-  theme(plot.title.position = "plot")
+  theme(plot.tag = element_text(size = 25, face = "bold")) # This sets the tag size!
 
 #set dimensions
 combined_plot_6panel <- combined_plot_6panel + plot_layout(heights = c(1, 1, 1, 1))
 
-
+combined_plot_6panel
 #save plot as pdf
 ggsave("combined_geochem.pdf",
        plot = combined_plot_6panel,
        width = 18, height = 24, units = "in", device = "pdf", limitsize = FALSE)
-
 
 
