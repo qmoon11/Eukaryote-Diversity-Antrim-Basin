@@ -1,7 +1,12 @@
-#This scripts completes the Community analysis of the 18s and ITS Amplicon data
+#This scripts completes the Community analysis of the 18s and ITS Amplicon data, as well as the Isolates data. And, is used
+# to generate the staked bar plots, metacoder trees, isolates, abundance, and diveristy figures.
 
 #### Load Packages ####
 library(Polychrome)
+library(scales)
+library(broom)
+library(Cairo)
+library(ggrastr)
 library(ggtree)
 library(ape)
 library(VennDiagram)
@@ -16,7 +21,6 @@ library(ggrepel)
 library(ape)
 library(picante)
 library(tidyverse)
-library(ALDEx2)
 library(ggsci)
 library(RColorBrewer)
 library(Polychrome)
@@ -27,8 +31,13 @@ library(ComplexUpset)
 library(ggVennDiagram)
 library(pals)
 library(metacoder)
+library(eulerr)
+library(jpeg)         
+library(grid) 
+library(ggpattern)
 
 setwd("/Users/quinnmoon/Downloads/Antrim_Microbiome")
+
 #### Read in OTU and Taxonomy Tables ####
 
 # PCoA and NMDS grouping, and combining of technical replicates completed in Isolates_taxonomy.R
@@ -83,7 +92,34 @@ taxonomy_18s <- taxonomy_18s %>%
 # Result: 342 OTUs detected using 18S primers after filtering
 
 
-#### OTU Accumulation Curves ####
+
+# ---------- 16s DATA ----------
+#OTU table
+OTU_table_16s <- read.csv("16s/16s_OTU_table_trimmed.csv") # 16S OTU table
+
+#taxonomy table (based on 0.7 default confidence)
+taxonomy_16s <- read_tsv("16s/outputs/taxonomy_16s.tsv") %>%
+  dplyr::rename(OTU_ID = `Feature ID`)
+
+# Filter taxonomy to keep only OTUs present in the OTU table
+taxonomy_16s <- taxonomy_16s %>%
+  dplyr::filter(OTU_ID %in% OTU_table_16s$OTU_ID)
+
+#parse taxon string
+taxonomy_16_clean <- taxonomy_16s %>%
+  # Split taxon into individual taxonomic ranks
+  separate(Taxon, into = c("Domain", "Phylum", "Class", "Order", "Family", "Genus", "Species"), sep = "; ", fill = "right") %>%
+  
+  # Remove prefixes like "d__", "p__", etc.
+  mutate(across(everything(), ~ sub("^[a-z]__*", "", .))) %>%
+  
+  # Replace empty strings or NAs with "unclassified"
+  mutate(across(everything(), ~ ifelse(is.na(.) | . == "", "Unclassified", .)))
+
+
+# ---------- Metadata ----------
+metadata_AS <- read.csv(file = "metadata_AS.csv") 
+
 #### Rarefaction and Species Accumulation Curves ####
 
 # ---------- ITS2 Rarefaction by Sample ----------
@@ -117,7 +153,7 @@ accumulation_colors <- c(
 acc_ITS_plot <- ggplot(rare_df_ITS, aes(x = Reads, y = Observed_OTUs, color = Sample)) +
   geom_line(size = 1) +
   labs(
-    x = "Read Count",
+    x = NULL,
     y = "Observed OTUs (ITS)",
     color = "BNG Well"
   ) +
@@ -150,7 +186,7 @@ rare_df_18s <- do.call(rbind, lapply(names(rare_list_18s), function(samp) {
 acc_18s_plot <- ggplot(rare_df_18s, aes(x = Reads, y = Observed_OTUs, color = Sample)) +
   geom_line(size = 1) +
   labs(
-    x = "Read Count",
+    x = NULL,
     y = "Observed OTUs (18s)",
     color = "BNG Well"
   ) +
@@ -159,28 +195,67 @@ acc_18s_plot <- ggplot(rare_df_18s, aes(x = Reads, y = Observed_OTUs, color = Sa
 
 # Results: All three 18S samples reach clear rarefaction plateaus
 
+# 
+# ---------- 16S Rarefaction by Sample ----------
+# Transpose OTU table so samples are rows and OTUs are columns (as expected by vegan)
+otu_mat_16s <- t(OTU_table_16s[, -1])  # remove OTU_ID column before transposing
+
+# Generate rarefaction curves for each sample
+# Using a fixed step size and sampling depth equal to the minimum library size
+rare_list_16s <- rarecurve(otu_mat_16s, step = 50, sample = min(rowSums(otu_mat_16s)), plot = FALSE)
+names(rare_list_16s) <- rownames(otu_mat_16s)
+
+# Convert rarefaction results to a tidy format for ggplot
+rare_df_16s <- do.call(rbind, lapply(names(rare_list_16s), function(samp) {
+  obs_otus <- rare_list_16s[[samp]]                   # observed OTUs
+  reads <- as.numeric(sub("N", "", names(obs_otus)))  # extract read counts from names
+  data.frame(Sample = samp, Reads = reads, Observed_OTUs = obs_otus)
+}))
+
+# Define color palette for samples
+accumulation_colors_16s <- c(
+  Bull = "#332288",
+  Conant = "#88CCEE",
+  Greg = "#44AA99",
+  Horn = "#117733",
+  Mortensen = "#DDCC77",
+  West = "#CC6677"
+)
+
+# Plot rarefaction curves for 16S
+acc_16s_plot <- ggplot(rare_df_16s, aes(x = Reads, y = Observed_OTUs, color = Sample)) +
+  geom_line(size = 1) +
+  labs(
+    x = "Read Count",
+    y = "Observed ASVs (16S)",
+    color = "BNG Well"
+  ) +
+  scale_color_manual(values = accumulation_colors_16s) +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+
 # ---------- ITS2 Species Accumulation (By Sample Count) ----------
-
-# Estimate species richness accumulation curves using 100 random permutations
+# Run species accumulation analysis for ITS2
 accum_ITS <- specaccum(otu_mat_ITS, method = "random", permutations = 100)
-
-# Convert to dataframe for plotting
+# Format output as dataframe
 accum_df_ITS <- data.frame(
   Samples = accum_ITS$sites,
   Richness = accum_ITS$richness,
   SD = accum_ITS$sd
 )
-
-# Plot species accumulation with confidence shading
+# Plot with shaded error
 acc_overall_ITS <- ggplot(accum_df_ITS, aes(x = Samples, y = Richness)) +
   geom_line(color = "blue", size = 1) +
   geom_ribbon(aes(ymin = Richness - SD, ymax = Richness + SD), alpha = 0.2, fill = "blue") +
   labs(
-    x = "Number of BNG Wells",
-    y = "Observed OTUs (ITS)"
+    x = NULL,
+    y = NULL
   ) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = length(unique(accum_df_ITS$Samples)))) +
   theme_minimal()
 
+#acc_overall_ITS
 # ---------- 18S Species Accumulation (By Sample Count) ----------
 
 # Run species accumulation analysis for 18S
@@ -198,111 +273,66 @@ acc_overall_18s <- ggplot(accum_df_18s, aes(x = Samples, y = Richness)) +
   geom_line(color = "blue", size = 1) +
   geom_ribbon(aes(ymin = Richness - SD, ymax = Richness + SD), alpha = 0.2, fill = "blue") +
   labs(
-    x = "Number of BNG Wells",
-    y = "Observed OTUs (18s)"
+    x = NULL,
+    y = NULL
   ) +
   scale_x_continuous(breaks = scales::pretty_breaks(n = length(unique(accum_df_18s$Samples)))) +
   theme_minimal()
 
+# ---------- 16s Species Accumulation (By Sample Count) ----------
+# Run species accumulation analysis for 16S
+accum_16s <- specaccum(otu_mat_16s, method = "random", permutations = 100)
+# Format output as dataframe
+accum_df_16s <- data.frame(
+  Samples = accum_16s$sites,
+  Richness = accum_16s$richness,
+  SD = accum_16s$sd
+)
+
+# Plot with shaded error
+acc_overall_16s <- ggplot(accum_df_16s, aes(x = Samples, y = Richness)) +
+  geom_line(color = "blue", size = 1) +
+  geom_ribbon(aes(ymin = Richness - SD, ymax = Richness + SD), alpha = 0.2, fill = "blue") +
+  labs(
+    x = "Number of BNG Wells",
+    y = NULL
+  ) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = length(unique(accum_df_16s$Samples)))) +
+  theme_minimal()
+
+
+
+
+
 # ---------- Combine All Plots into One Figure ----------
 
 # Stack the four plots (18S and ITS, both rarefaction and accumulation)
-accplot <- acc_18s_plot / acc_overall_18s / acc_ITS_plot / acc_overall_ITS +
-  plot_layout(ncol = 1, heights = c(2, 2, 2, 2)) +
+
+accplot <- (
+  acc_18s_plot + acc_overall_18s +
+    acc_ITS_plot + acc_overall_ITS +
+    acc_16s_plot + acc_overall_16s
+) +
+  plot_layout(ncol = 2, nrow = 3, byrow = TRUE) +
   plot_annotation(
     tag_levels = 'A',
     tag_prefix = "(",
-    tag_suffix = ")",
-    theme = theme(
-      plot.tag = element_text(size = 16, face = "bold")
-    )
+    tag_suffix = ")"
+  ) &
+  theme(
+    plot.tag = element_text(size = 12, face = "bold")  # bigger size & bold here, applied to all plots
   )
 
+accplot
 # Save final combined figure to SVG file
-ggsave("accumulation_plots.svg", plot = accplot, width = 8, height = 12, units = "in")
-
-
-
-#### Venn Diagram Fungi ITS####
-# ----------------- Filter ITS OTUs to Only Fungal Taxa and Generate Venn Diagram ####
-
-# Extract only fungal entries from the ITS taxonomy
-Taxonomy_ITS_fungi <- taxonomy_ITS %>%
-  dplyr::filter(kingdom == "Fungi")  # Keep only OTUs classified as fungi
-
-# Convert taxonomy to matrix format required by phyloseq::tax_table
-# Set OTU_IDs as row names
-taxonomy_ITS_mat <- as.matrix(column_to_rownames(Taxonomy_ITS_fungi, var = "OTU_ID"))
-tax_table_ITS_phy <- tax_table(taxonomy_ITS_mat)  # Create phyloseq tax_table object
-
-# Filter the ITS OTU table to keep only fungal OTUs based on taxonomy
-OTU_table_ITS_fungi <- OTU_table_ITS %>%
-  semi_join(Taxonomy_ITS_fungi, by = "OTU_ID")
-
-# Format the OTU table: set OTU IDs as row names and remove the OTU_ID column
-rownames(OTU_table_ITS_fungi) <- OTU_table_ITS_fungi[[1]]
-OTU_table_ITS_fungi <- OTU_table_ITS_fungi[, -1]
-
-# Convert OTU table to binary presence/absence format (TRUE if OTU > 0 reads)
-otu_table_binary <- OTU_table_ITS_fungi > 0
-
-# Generate a list of OTUs present in each site
-# The result is a named list where each site has a vector of OTU IDs
-otu_list_per_site <- apply(otu_table_binary, 2, function(col) {
-  rownames(otu_table_binary)[col]
-})
-
-# Define custom colors for each of the 6 sites for plotting
-venn_site_colors <- c("red", "blue", "green", "orange", "purple", "brown")
-names(venn_site_colors) <- names(otu_list_per_site)[1:6]  # Assign site names to colors
-
-# Plot Venn diagram showing OTU overlaps across sites
-venn_plot <- ggVennDiagram(
-  otu_list_per_site[1:6],       # use first 6 sites
-  label = "count",              # show OTU counts in each intersection
-  edge_size = 1.2,
-  edge_lty = "solid",
-  set_color = venn_site_colors, # custom site colors
-  set_name_size = 7             # increase font size of site names
-) +
-  theme_void() +                # minimal theme for cleaner look
-  theme(
-    legend.position = "right",
-    legend.title = element_text(size = 16),
-    legend.text = element_text(size = 14)
-  ) +
-  labs(fill = "OTU Count")      # customize legend title
-
-# Display plot
-venn_plot
-
-# Save Venn diagram to SVG file
-ggsave("venn_plot.svg",
-       plot = venn_plot,
-       width = 10, height = 9, units = "in", device = "svg", limitsize = FALSE)
-
-# ----------------- Identify Shared OTUs -----------------
-
-# Count the number of sites each OTU appears in (row sums of binary table)
-venn_otu_site_counts <- rowSums(otu_table_binary)
-
-# Extract OTUs present in all 6 sites
-otus_in_6_sites <- names(otu_site_counts[venn_otu_site_counts == 6])
-
-# Extract OTUs present in exactly 5 sites
-otus_in_5_sites <- names(otu_site_counts[venn_otu_site_counts == 5])
-
-# OTUs present in all sites:
-# "0fac242e0a12de35d46a2b2ac8dde906" — matches Irpex lacteus (100%), also isolated
-
-# OTUs present in 5 of 6 sites:
-# "827c3c02a67a4c50e5e10ec4100429f4" — 100% match to Saccharomyces sp. (uncultured)
-# "081720e5f9f84e1181553a050cbae7f2" — 92% match to Helotiales sp. (isolated)
+#ggsave("accumulation_plots.pdf", plot = accplot, width = 14, height = 10)
 
 
 
 
-#### Stacked Bar Plots for ITS Fungal Community Composition ####
+
+#### Stacked Bar Plots ####
+#### ITS Fungal Community Composition ####
 
 # ---- Load Sample Metadata for ITS Samples ----
 metadata_ITS <- read.csv(file = "metadata_ITS.csv")  # Import sample metadata
@@ -342,29 +372,6 @@ sample_data(physeq_rel_ITS)$Sample <- factor(
   levels = desired_order
 )
 
-# ---- Plot: Relative Abundance at the Phylum Level ----
-ITS_phylum <- plot_bar(physeq_rel_ITS, x = "sample_Sample", fill = "phylum") +
-  geom_bar(stat = "identity", position = "stack", color = NA) +
-  scale_fill_brewer(palette = "Set2") +  # Colorblind-friendly palette
-  theme_minimal() +
-  ylab("Relative Abundance") +
-  labs(fill = "Phylum") +
-  theme(
-    axis.text.x = element_blank(),         # Remove x-axis tick labels
-    axis.ticks.x = element_blank(),        # Remove x-axis ticks
-    panel.grid.major = element_blank(),    # Remove major gridlines
-    panel.grid.minor = element_blank(),    # Remove minor gridlines
-    panel.border = element_rect(color = "black", fill = NA, size = 1),
-    axis.title.x = element_text(size = 16),
-    axis.title.y = element_text(size = 14),
-    legend.title = element_text(size = 18),
-    legend.text = element_text(size = 16),
-    legend.key.size = unit(1.2, "cm")
-  )
-
-# Save if needed:
-# ggsave("ITS_phylum_stacked_barplot.jpg", plot = ITS_phylum, width = 16, height = 12, dpi = 1000)
-
 # ---- Plot: Relative Abundance at the Class Level ----
 
 # Agglomerate OTUs to the Class level
@@ -377,252 +384,6 @@ class_levels <- as.character(class_levels[!is.na(class_levels)])  # Remove NA en
 # Generate a named color palette with enough distinct colors for all classes
 palette_24_named <- setNames(createPalette(length(class_levels), c("#ffffff", "#000000")),
                              class_levels)
-
-# Build the plot
-ITS_class <- plot_bar(physeq_ITs_class, x = "sample_Sample", fill = "class") +
-  geom_bar(stat = "identity", position = "stack", color = NA) +
-  scale_fill_manual(values = palette_24_named) +  # Use custom class color palette
-  theme_minimal() +
-  ylab("Relative Abundance") +
-  xlab("BNG Well") +
-  labs(fill = "Class") +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),  # Rotate x labels
-    axis.title.x = element_text(size = 16),
-    axis.title.y = element_text(size = 14),
-    legend.title = element_text(size = 18),
-    legend.text = element_text(size = 16),
-    legend.key.size = unit(1.2, "cm")
-  )
-
-# Save if needed:
-# ggsave("ITS_class_stacked_barplot.jpg", plot = ITS_class, width = 16, height = 12, dpi = 1000)
-
-#### Plot Isolates Stacked Bar ####
-# Load isolate taxonomy data and subset relevant taxonomic columns
-isolates_data <- read.csv("all_isolates_trimmed.csv", row.names = NULL)
-isolates_taxonomy <- isolates_data[, c(1,10:15)]  # OTU_ID and taxonomic ranks
-
-# Set OTU_ID as row names and convert to matrix
-taxonomy_mat <- isolates_taxonomy %>%
-  column_to_rownames(var = "OTU_ID") %>%
-  as.matrix()
-
-# Convert matrix to tax_table and create phyloseq object
-tax_table_obj <- tax_table(taxonomy_mat)
-physeq_from_taxonomy <- phyloseq(tax_table_obj)
-
-# Extract taxonomy table as data frame
-tax_df_isolates <- as.data.frame(tax_table(physeq_from_taxonomy)) %>%
-  rownames_to_column("OTU_ID")
-
-
-# ----- Phylum-Level Stacked Bar Plot -----
-# Count number of OTUs per phylum
-rank_summaries_phylum <- 
-  tax_df_isolates %>%
-  group_by(Phylum) %>%
-  summarise(OTU_count = n()) %>%
-  ungroup() %>%
-  arrange(desc(OTU_count))
-
-# Plot phylum distribution as stacked bar
-Isolates_phylum <- ggplot(rank_summaries_phylum, aes(x = "", y = OTU_count, fill = Phylum)) +
-  geom_bar(stat = "identity", position = "stack", color = NA) +
-  scale_fill_manual(values = palette_phylum) +
-  theme_minimal() +
-  ylab("") +
-  xlab("") +
-  labs(fill = "Phylum") +
-  theme(
-    panel.border = element_rect(color = "black", fill = NA, size = 1),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
-    axis.title.x = element_text(size = 16),
-    axis.text.y = element_text(size = 17, color = "black"),
-    legend.title = element_text(size = 18),
-    legend.text = element_text(size = 16),
-    legend.key.size = unit(1.2, "cm"),
-  )
-
-
-# ----- Class-Level Stacked Bar Plot -----
-# Count number of OTUs per class
-rank_summaries_class <- 
-  tax_df_isolates %>%
-  group_by(Class) %>%
-  summarise(OTU_count = n()) %>%
-  ungroup() %>%
-  arrange(desc(OTU_count))
-
-# Plot class distribution
-Isolates_class <- ggplot(rank_summaries_class, aes(x = "", y = OTU_count, fill = Class)) +
-  geom_bar(stat = "identity", position = "stack", color = NA) +
-  scale_fill_manual(values = palette_class) +
-  theme_minimal() +
-  ylab("") +
-  xlab("") +
-  labs(fill = "Class") +
-  theme(
-    panel.border = element_rect(color = "black", fill = NA, size = 1),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
-    axis.title.x = element_text(size = 16),
-    axis.text.y = element_text(size = 17, color = "black"),
-    legend.title = element_text(size = 18),
-    legend.text = element_text(size = 16),
-    legend.key.size = unit(1.2, "cm")
-  )
-
-Isolates_class
-
-
-# ----- Order-Level Stacked Bar Plot -----
-# Count OTUs by order and generate custom color palette
-rank_summaries_order <- 
-  tax_df_isolates %>%
-  group_by(Order) %>%
-  summarise(OTU_count = n()) %>%
-  ungroup() %>%
-  arrange(desc(OTU_count))
-
-rank_summaries_order$Order <- as.character(rank_summaries_order$Order)
-unique_orders <- setdiff(unique(rank_summaries_order$Order), "Unclassified")
-n_orders <- length(unique_orders)
-
-# Generate color palette for orders, with "Unclassified" as black
-full_palette_alphabet <- alphabet()
-clean_palette_order <- full_palette_alphabet[full_palette_alphabet != "#191919"]
-palette_colors_order <- clean_palette_order[1:n_orders]
-palette_orders <- setNames(palette_colors_order, unique_orders)
-palette_orders["Unclassified"] <- "black"
-
-rank_summaries_order$Order <- factor(rank_summaries_order$Order, levels = c(unique_orders, "Unclassified"))
-
-# Plot order distribution
-Isolates_order <- ggplot(rank_summaries_order, aes(x = "", y = OTU_count, fill = Order)) +
-  geom_bar(stat = "identity", position = "stack", color = NA) +
-  scale_fill_manual(values = palette_orders, guide = guide_legend(ncol = 2)) +
-  theme_minimal() +
-  ylab("Isolate OTU Count") +
-  xlab("") +
-  labs(fill = "Order") +
-  theme(
-    panel.border = element_rect(color = "black", fill = NA, size = 1),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
-    axis.title.y = element_text(size = 25),
-    axis.text.y = element_text(size = 17, color = "black"),
-    legend.title = element_text(size = 18),
-    legend.text = element_text(size = 16),
-    legend.key.size = unit(1.2, "cm")
-  )
-
-Isolates_order
-
-
-# ----- Family-Level Stacked Bar Plot -----
-# Count OTUs by family and assign custom colors
-rank_summaries_family <- 
-  tax_df_isolates %>%
-  group_by(Family) %>%
-  summarise(OTU_count = n()) %>%
-  ungroup() %>%
-  arrange(desc(OTU_count))
-
-unique_families <- setdiff(unique(rank_summaries_family$Family), "Unclassified")
-n_families <- length(unique_families)
-
-# Use Polychrome palette, ensuring enough unique colors
-full_palette_polychrome <- polychrome()
-clean_palette_family <- full_palette_polychrome[full_palette_polychrome != "#191919"]
-if (n_families > length(clean_palette_family)) {
-  stop("Not enough distinct colors after removing #191919 from Polychrome palette.")
-}
-
-palette_colors_families <- clean_palette_family[1:n_families]
-palette_family <- setNames(palette_colors_families, unique_families)
-palette_family["Unclassified"] <- "black"
-
-rank_summaries_family$Family <- factor(rank_summaries_family$Family, levels = c(unique_families, "Unclassified"))
-
-# Plot family distribution
-Isolates_family <- ggplot(rank_summaries_family, aes(x = "", y = OTU_count, fill = Family)) +
-  geom_bar(stat = "identity", position = "stack", color = NA) +
-  scale_fill_manual(values = palette_family, guide = guide_legend(ncol = 3)) +
-  theme_minimal() +
-  ylab("") +
-  xlab("") +
-  labs(fill = "Family") +
-  theme(
-    panel.border = element_rect(color = "black", fill = NA, size = 1),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
-    axis.title.x = element_text(size = 16),
-    axis.text.y = element_text(size = 17, color = "black"),
-    legend.title = element_text(size = 18),
-    legend.text = element_text(size = 16),
-    legend.key.size = unit(1.2, "cm")
-  )
-
-
-# ----- Genus-Level Stacked Bar Plot -----
-# Count OTUs per genus and assign colors
-rank_summaries_genus <- 
-  tax_df_isolates %>%
-  group_by(Genus) %>%
-  summarise(OTU_count = n()) %>%
-  ungroup() %>%
-  arrange(desc(OTU_count))
-
-unique_genera <- setdiff(unique(rank_summaries_genus$Genus), "Unclassified")
-n_genera <- length(unique_genera)
-
-full_palette_polychrome <- polychrome()
-clean_palette_genus <- full_palette_polychrome[full_palette_polychrome != "#191919"]
-
-palette_colors_genus <- clean_palette_genus[1:n_genera]
-palette_genus <- setNames(palette_colors_genus, unique_genera)
-palette_genus["Unclassified"] <- "black"
-
-rank_summaries_genus$Genus <- factor(rank_summaries_genus$Genus, levels = c(unique_genera, "Unclassified"))
-
-# Plot genus distribution
-Isolates_genus <- ggplot(rank_summaries_genus, aes(x = "", y = OTU_count, fill = Genus)) +
-  geom_bar(stat = "identity", position = "stack", color = NA) +
-  scale_fill_manual(values = palette_genus, guide = guide_legend(ncol = 3)) +
-  theme_minimal() +
-  ylab("") +
-  xlab("") +
-  labs(fill = "Genus") +
-  theme(
-    panel.border = element_rect(color = "black", fill = NA, size = 1),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
-    axis.title.x = element_text(size = 16),
-    axis.text.y = element_text(size = 17, color = "black"),
-    legend.title = element_text(size = 18),
-    legend.text = element_text(size = 16),
-    legend.key.size = unit(1.2, "cm")
-  )
-
-Isolates_genus
-
-
-# ----- Combine All Taxonomic Plots -----
-# Assemble all stacked bar plots vertically using patchwork
-combined_stacked_bar_plot_isolates <- Isolates_phylum / Isolates_class / Isolates_order / Isolates_family / Isolates_genus +
-  plot_layout(ncol = 1, heights = rep(1, 5)) +
-  plot_annotation(
-    theme = theme(
-      plot.tag = element_text(size = 20, face = "bold", family = "Source Sans Pro")  # Optional plot-level styling
-    )
-  )
-
-combined_stacked_bar_plot_isolates
-
-# Save full composite figure to PDF
-ggsave("combined_stacked_bar_plot_isolates.pdf",
-       plot = combined_stacked_bar_plot_isolates,
-       width = 15, height = 40, units = "in", device = "pdf", limitsize = FALSE)
-
-
-
 
 #### Stacked Bar Plots: 18S rRNA Data ####
 
@@ -806,8 +567,180 @@ euk_class <- plot_bar(physeq_18s_euk_class, x = "sample_Sample", fill = "Class")
 
 
 
-#### Merge All Stacked Bar Plots ####
+#### Stacked Bar Plots: 16s ####
+# ----- Prepare Metadata for 16s Analysis ####
+metadata_16s <-read.csv(file = "metadata_AS.csv") 
 
+# Convert metadata to phyloseq sample_data format
+metadata_phy_16s <- sample_data(column_to_rownames(metadata_16s, var = "Sample"))
+
+# ----- Filter 16s ASVs ####
+#Drop the 1 ASV that was not classified at Domain level
+taxonomy_16s_phy <- taxonomy_16_clean %>%
+  dplyr::filter(Domain != "Unclassified")
+
+# ----- Create 16s phy seq object ####
+# Prepare tax_table object from fungal taxonomy
+taxonomy_16s_mat <- as.matrix(column_to_rownames(taxonomy_16s_phy, var = "OTU_ID"))
+tax_table_16s_phy <- tax_table(taxonomy_16s_mat)
+
+# Filter OTU table to match only ASVs in taxonomy file
+OTU_table_16s_phy <- OTU_table_16s %>%
+  semi_join(taxonomy_16s_phy, by = "OTU_ID")
+
+# Convert OTU table to matrix and make OTU IDs rownames
+otu_16s_mat <- as.matrix(column_to_rownames(OTU_table_16s_phy, var = "OTU_ID"))
+otu_16s_phy <- otu_table(otu_16s_mat, taxa_are_rows = TRUE)  # Indicate OTUs are rows
+
+
+# ---- Construct Phyloseq Object for 16s ----
+physeq_16s <- phyloseq(otu_16s_phy, tax_table_16s_phy, metadata_phy_16s)  # Combine OTU, taxonomy, and metadata
+
+# ---- Transform Counts to Relative Abundances ----
+physeq_rel_16s <- transform_sample_counts(physeq_16s, function(x) x / sum(x))  # Normalize within each sample
+
+# ---- Sample Order for Plotting ----
+desired_order <- c("Conant", "Greg", "Mortensen", "Bull", "Horn", "West")  # Desired sample order
+
+# Update sample names and factor levels to enforce order
+sample_data(physeq_rel_16s)$Sample <- rownames(sample_data(physeq_rel_16s))
+sample_data(physeq_rel_16s)$Sample <- factor(
+  sample_data(physeq_rel_16s)$Sample,
+  levels = desired_order
+)
+# ---- Create "Other" for less than 1% phyla ----
+# Transform physeq object to data frame
+df_16s <- psmelt(physeq_rel_16s)  # psmelt() flattens phyloseq into long-form
+
+# Sum relative abundances across all samples
+low_phyla_16s <- df_16s %>%
+  group_by(Phylum) %>%
+  summarise(total_abundance = sum(Abundance)) %>%
+  mutate(rel_abund = total_abundance / sum(total_abundance)) %>%
+  filter(rel_abund < 0.01) %>%
+  pull(Phylum)
+
+df_16s <- df_16s %>%
+  dplyr::mutate(Phylum = ifelse(Phylum %in% low_phyla_16s, "Other", Phylum))
+
+#Assign colors to other and unclassified
+# 1. Define archaeal phyla
+archaea_phyla <- c("Halobacterota", "Euryarchaeota")
+
+# 2. Get phylum levels, put "Other" and "Unclassified" last
+phyla_levels <- unique(df_16s$Phylum)
+phyla_levels <- setdiff(phyla_levels, c("Other", "Unclassified"))
+phyla_levels <- sort(phyla_levels)
+phyla_levels <- c(phyla_levels, "Other", "Unclassified")
+
+# 3. Create display labels with * for Archaea
+phyla_display <- phyla_levels
+phyla_display[phyla_display %in% archaea_phyla] <- paste0(phyla_display[phyla_display %in% archaea_phyla], "*")
+
+# 4. Generate a distinct palette for non-gray/black
+palette_main <- createPalette(length(phyla_levels) - 2, 
+                              seedcolors = c("#FF0000", "#00FF00", "#0000FF"))
+
+# 5. Assign colors to display names
+phyla_colors <- setNames(palette_main, phyla_display[1:(length(phyla_levels) - 2)])
+phyla_colors["Other"] <- "gray70"
+phyla_colors["Unclassified"] <- "black"
+
+# 6. Set factor with original levels, but new labels
+df_16s$Phylum <- factor(df_16s$Phylum, levels = phyla_levels, labels = phyla_display)
+
+
+# ---- Plot: Relative Abundance at the Phylum Level ----
+phylum_16s_plot <- ggplot(df_16s, aes(x = sample_Sample, y = Abundance, fill = Phylum)) +
+  geom_bar(stat = "identity", position = "stack", color = NA, linewidth = 0) +
+  scale_fill_manual(values = phyla_colors, guide = guide_legend(ncol = 2)) +
+  theme_minimal() +
+  ylab("Relative Abundance") +
+  labs(
+    fill = "Bacterial and Archaeal Phylum (16s)",
+    x = NULL
+  ) +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.ticks.y = element_line(),
+    axis.title.y = element_text(size = 18),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    legend.title = element_text(size = 18),
+    legend.text = element_text(size = 16),
+    legend.key.size = unit(1.2, "cm"),
+    plot.margin = margin(5, 5, 5, 5)
+  )
+
+phylum_16s_plot
+# ---- Plot: Relative Abundance at the Class Level ----
+# ---- Collapse low abundance classes ----
+low_classes_16s <- df_16s %>%
+  group_by(Class) %>%
+  summarise(total_abundance = sum(Abundance)) %>%
+  mutate(rel_abund = total_abundance / sum(total_abundance)) %>%
+  filter(rel_abund < 0.01) %>%
+  pull(Class)
+
+df_16s <- df_16s %>%
+  dplyr::mutate(Class = ifelse(Class %in% low_classes_16s, "Other", Class))
+
+# ---- Assign colors and annotate archaeal classes ----
+# 2. Get class levels, put "Other" and "Unclassified" last
+class_levels <- unique(df_16s$Class)
+class_levels <- setdiff(class_levels, c("Other", "Unclassified"))
+class_levels <- sort(class_levels)
+class_levels <- c(class_levels, "Other", "Unclassified")
+
+
+# 1. Define archaeal classes (edit as needed based on your taxonomy)
+archaea_classes <- c("Methanosarcinia", "Methanomicrobia", "Methanobacteria")
+
+# 3. Create display labels with * for Archaea
+class_display <- class_levels
+class_display[class_display %in% archaea_classes] <- paste0(class_display[class_display %in% archaea_classes], "*")
+
+# 4. Generate distinct color palette
+palette_main <- createPalette(length(class_levels) - 2, 
+                              seedcolors = c("#FF0000", "#00FF00", "#0000FF"))
+
+# 5. Assign colors to display names
+class_colors <- setNames(palette_main, class_display[1:(length(class_levels) - 2)])
+class_colors["Other"] <- "gray70"
+class_colors["Unclassified"] <- "black"
+
+# 6. Set factor in df_16s with display labels
+df_16s$Class <- factor(df_16s$Class, levels = class_levels, labels = class_display)
+
+
+# ---- Draw Plot ----
+class_16s_plot <- ggplot(df_16s, aes(x = sample_Sample, y = Abundance, fill = Class)) +
+  geom_bar(stat = "identity", position = "stack", color = NA, linewidth = 0) +
+  scale_fill_manual(values = class_colors, guide = guide_legend(ncol = 2)) +
+  theme_minimal() +
+  ylab("") +
+  labs(fill = "Bacterial and Archaeal Class (16s)") +
+  theme(
+    axis.text.x = element_blank(),                     # Remove x-axis labels
+    axis.ticks.x = element_blank(),                    # Remove x-axis ticks
+    axis.title.x = element_blank(),                    # Remove x-axis title
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.ticks.y = element_line(),
+    axis.title.y = element_text(size = 18),
+    legend.title = element_text(size = 18),
+    legend.text = element_text(size = 16),
+    legend.key.size = unit(1.2, "cm"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    plot.margin = margin(5, 5, 5, 5)
+  )
+class_16s_plot 
+#### Merge All Stacked Bar Plots ####
 # ----- Define consistent color palettes for taxa -----
 # Extract unique phyla from ITS, 18s eukaryotes, and 18s fungi; remove NA
 all_phyla <- unique(c(
@@ -862,15 +795,17 @@ plot_ITS_phyla <- plot_bar(physeq_rel_ITS, x = "sample_Sample", fill = "phylum")
   scale_fill_manual(values = palette_phylum) +
   theme_minimal() +
   ylab("Relative Abundance") +
-  labs(fill = "Phylum") +
+  labs(fill = "Fungal Phylum (ITS)") +
   theme(
     axis.text.x = element_blank(),
     axis.ticks.x = element_blank(),
     axis.title.x = element_blank(),
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.ticks.y = element_line(),
+    axis.title.y = element_text(size = 18),
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     panel.border = element_rect(color = "black", fill = NA, size = 0.5),
-    axis.title.y = element_text(size = 14),
     legend.title = element_text(size = 18),
     legend.text = element_text(size = 16),
     legend.key.size = unit(1.2, "cm"),
@@ -879,46 +814,66 @@ plot_ITS_phyla <- plot_bar(physeq_rel_ITS, x = "sample_Sample", fill = "phylum")
 
 # ITS class plot with rotated x-axis labels and full axis details
 plot_ITS_class <- plot_bar(physeq_ITs_class, x = "sample_Sample", fill = "class") +
-  geom_bar(stat = "identity", position = "stack", color = NA) +
+  geom_bar(stat = "identity", position = "stack", color = NA, linewidth = 0) +  # Set linewidth to 0 to match
   scale_fill_manual(values = palette_class) +
   scale_x_discrete(drop = FALSE) +
   theme_minimal() +
-  ylab("Relative Abundance") +
-  xlab("BNG Well") +
-  labs(fill = "Class") +
+  ylab("") +
+  labs(fill = "Fungal Class (ITS)") +
   theme(
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 14, color = "black"),
-    axis.ticks.x = element_line(),
-    axis.title.x = element_text(size = 14),
+    axis.text.x = element_blank(),                       # No x-axis text
+    axis.ticks.x = element_blank(),                      # No x-axis ticks
+    axis.title.x = element_blank(),                      # No x-axis title
+    axis.text.y = element_text(size = 16, color = "black"),  # Big y-axis numbers
+    axis.ticks.y = element_line(),                       # Y-axis ticks
+    axis.title.y = element_text(size = 18),              # Big y-axis label
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     panel.border = element_rect(color = "black", fill = NA, size = 0.5),
-    axis.title.y = element_text(size = 14),
-    legend.title = element_text(size = 18),
+    legend.title = element_text(size = 18),              # Legends match
     legend.text = element_text(size = 16),
     legend.key.size = unit(1.2, "cm"),
     plot.margin = margin(5, 5, 5, 5)
   )
 
 
+
 # ----- Generate stacked bar plots for 18s fungi datasets -----
+
+# Create a data frame for the missing samples. Add * to empty sites
+asterisk_df <- data.frame(
+  sample_Sample = c("Conant", "Greg", "Horn"),
+  y = 0.45,  # Adjust this for positioning
+  label = "*"
+)
+
+
 # Fungi phylum plot without x-axis labels
 plot_fungi_18s_phyla <- plot_bar(physeq_rel_18s_fungi, x = "sample_Sample", fill = "Phylum") +
-  geom_bar(stat = "identity", position = "stack", color = NA) +
+  geom_bar(stat = "identity", position = "stack", color = NA, linewidth = 0) +
+  geom_text(
+    data = asterisk_df,
+    aes(x = sample_Sample, y = y, label = label),
+    inherit.aes = FALSE,
+    color = "black",
+    size = 12,  # Increase for better visibility
+    vjust = 0
+  ) +
   scale_fill_manual(values = palette_phylum) +
   scale_x_discrete(drop = FALSE) +
   theme_minimal() +
   ylab("Relative Abundance") +
-  xlab("BNG Well") +
-  labs(fill = "Phylum") +
+  labs(fill = "Fungal Phylum (18s)") +
   theme(
     axis.text.x = element_blank(),
     axis.ticks.x = element_blank(),
     axis.title.x = element_blank(),
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.ticks.y = element_line(),
+    axis.title.y = element_text(size = 18),
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     panel.border = element_rect(color = "black", fill = NA, size = 0.5),
-    axis.title.y = element_text(size = 14),
     legend.title = element_text(size = 18),
     legend.text = element_text(size = 16),
     legend.key.size = unit(1.2, "cm"),
@@ -927,106 +882,234 @@ plot_fungi_18s_phyla <- plot_bar(physeq_rel_18s_fungi, x = "sample_Sample", fill
 
 # Fungi class plot without x-axis labels
 plot_fungi_18s_class <- plot_bar(physeq_18s_class, x = "sample_Sample", fill = "Class") +
-  geom_bar(stat = "identity", position = "stack", color = NA) +
+  geom_bar(stat = "identity", position = "stack", color = NA, linewidth = 0) +
+  geom_text(
+    data = asterisk_df,
+    aes(x = sample_Sample, y = y, label = label),
+    inherit.aes = FALSE,
+    color = "black",
+    size = 12,  # Increase for better visibility
+    vjust = 0
+  ) +
   scale_fill_manual(values = palette_class) +
   scale_x_discrete(drop = FALSE) +
   theme_minimal() +
-  ylab("Relative Abundance") +
-  xlab("BNG Well") +
-  labs(fill = "Class") +
+  ylab("") +
+  labs(fill = "Fungal Class (18s)") +
   theme(
     axis.text.x = element_blank(),
     axis.ticks.x = element_blank(),
     axis.title.x = element_blank(),
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.ticks.y = element_line(),
+    axis.title.y = element_text(size = 18),
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     panel.border = element_rect(color = "black", fill = NA, size = 0.5),
-    axis.title.y = element_text(size = 14),
     legend.title = element_text(size = 18),
     legend.text = element_text(size = 16),
     legend.key.size = unit(1.2, "cm"),
     plot.margin = margin(5, 5, 5, 5)
   )
-
 
 # ----- Generate stacked bar plots for 18s eukaryote datasets -----
 # Division plot without x-axis labels
 plot_euk_18s_division <- plot_bar(physeq_rel_18s_euk, x = "sample_Sample", fill = "Division") +
-  geom_bar(stat = "identity", position = "stack", color = NA) +
+  geom_bar(stat = "identity", position = "stack", color = NA, linewidth = 0) +
+  geom_text(
+    data = asterisk_df,
+    aes(x = sample_Sample, y = y, label = label),
+    inherit.aes = FALSE,
+    color = "black",
+    size = 12,
+    vjust = 0
+  ) +
   scale_fill_manual(values = palette_division) +
   scale_x_discrete(drop = FALSE) +
   theme_minimal() +
   ylab("Relative Abundance") +
-  xlab("BNG Well") +
-  labs(fill = "Division") +
+  labs(
+    x = "BNG Well",
+    fill = "Microeukaryotic Division (18s)"
+  ) +
   theme(
-    axis.text.x = element_blank(),
-    axis.ticks.x = element_blank(),
-    axis.title.x = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 16, color = "black"), # bigger x-axis labels
+    axis.ticks.x = element_line(),
+    axis.title.x = element_text(size = 22),                                         # bigger x-axis title
+    axis.text.y = element_text(size = 16, color = "black"),                         # bigger y-axis numbers
+    axis.ticks.y = element_line(),
+    axis.title.y = element_text(size = 18),                                         # bigger y-axis title
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     panel.border = element_rect(color = "black", fill = NA, size = 0.5),
-    axis.title.y = element_text(size = 14),
     legend.title = element_text(size = 18),
     legend.text = element_text(size = 16),
     legend.key.size = unit(1.2, "cm"),
     plot.margin = margin(5, 5, 5, 5)
   )
 
-# Eukaryote class plot with rotated x-axis labels
+
+# plot euk class
 plot_euk_18s_class <- plot_bar(physeq_18s_euk_class, x = "sample_Sample", fill = "Class") +
-  geom_bar(stat = "identity", position = "stack", color = NA) +
+  geom_bar(stat = "identity", position = "stack", color = NA, linewidth = 0) +
+  geom_text(
+    data = asterisk_df,
+    aes(x = sample_Sample, y = y, label = label),
+    inherit.aes = FALSE,
+    color = "black",
+    size = 12,
+    vjust = 0
+  ) +
   scale_fill_manual(values = palette_class) +
   scale_x_discrete(drop = FALSE) +
   theme_minimal() +
-  ylab("Relative Abundance") +
-  xlab("BNG Well") +
-  labs(fill = "Class") +
+  ylab("") +
+  labs(
+    x = "BNG Well",
+    fill = "Microeukaryotic Class (18s)"
+  ) +
   theme(
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 14, color = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 16, color = "black"), # bigger x-axis labels
     axis.ticks.x = element_line(),
-    axis.title.x = element_text(size = 14),
+    axis.title.x = element_text(size = 22),                                         # bigger x-axis title
+    axis.text.y = element_text(size = 16, color = "black"),                         # bigger y-axis numbers
+    axis.ticks.y = element_line(),
+    axis.title.y = element_text(size = 18),                                         # bigger y-axis title
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     panel.border = element_rect(color = "black", fill = NA, size = 0.5),
-    axis.title.y = element_text(size = 14),
     legend.title = element_text(size = 18),
     legend.text = element_text(size = 16),
     legend.key.size = unit(1.2, "cm"),
     plot.margin = margin(5, 5, 5, 5)
   )
-
+plot_euk_18s_class
 
 # ----- Combine and save stacked bar plots -----
-combined_stacked_bar_plot_ITS <- plot_ITS_phyla / plot_ITS_class +
-  plot_layout(ncol = 1, heights = c(1, 1)) +
+  
+
+#Combine all into single plot
+total_combined_bars <- plot_ITS_phyla + plot_ITS_class +
+  phylum_16s_plot + class_16s_plot +
+  plot_fungi_18s_phyla + plot_fungi_18s_class +
+  plot_euk_18s_division + plot_euk_18s_class +
+  plot_layout(ncol = 2, nrow = 4) +
   plot_annotation(
-    tag_levels = 'A',
-    tag_prefix = "(", 
-    tag_suffix = ")",
-    theme = theme(
-      plot.tag.text = element_text(size = 16, face = "bold")
-    )
+    tag_levels = list(c("(A) 1.", "2.",
+                        "(B) 1.", "2.",
+                        "(C) 1.", "2.",
+                        "    3.", "4.")),  # <-- Closed properly
+    tag_prefix = "",
+    tag_suffix = "",
+    theme = theme(plot.tag = element_text(size = 35, face = "bold"))  # <-- Custom tag style
+  ) &
+  theme(
+    plot.tag = element_text(size = 30, face = "bold"),  # Applies to all plots
+    plot.margin = margin(5, 5, 5, 5)
   )
 
-ggsave("combined_stacked_bar_plot_ITS.pdf",
-       plot = combined_stacked_bar_plot_ITS,
-       width = 15, height = 15, units = "in", device = "pdf", limitsize = FALSE)
-
-combined_stacked_bar_plot_18s <- plot_fungi_18s_phyla / plot_fungi_18s_class / plot_euk_18s_division / plot_euk_18s_class  +
-  plot_layout(ncol = 1, heights = c(1,1,1,1))
-
-ggsave("combined_stacked_bar_plot_18s.pdf",
-       plot = combined_stacked_bar_plot_18s,
-       width = 15, height = 26, units = "in", device = "pdf", limitsize = FALSE)
+ggsave("total_combined_bars.png",
+       plot = total_combined_bars,
+       width = 30, height = 26, units = "in",
+       dpi = 600,
+       device = "png",
+       limitsize = FALSE)
 
 
 
 
 
 
-#### Calculate Chao Richness ####
 
+
+
+
+
+
+
+
+
+#### Community Analysis ####
+#----Calculate Chao Richness -----
+# ----- 16s ####
+### --- TOTAL 16S RICHNESS (ALL TAXA) --- ###
+
+# Transpose OTU table so samples are rows, OTUs are columns
+# Then remove first row (often taxonomy row or header)
+OTU_table_16s_diversity <- t(OTU_table_16s_phy)[-1, ]
+
+# Convert all values to numeric (needed for estimateR)
+OTU_table_16s_diversity_numeric <- apply(OTU_table_16s_diversity, 2, as.numeric)
+
+# Calculate Chao1 richness using vegan::estimateR()
+chao1_total <- estimateR(OTU_table_16s_diversity_numeric)["S.chao1", ]
+
+# Create dataframe with Chao1 values and sample names
+chao1_df_total <- data.frame(
+  Sample = rownames(OTU_table_16s_diversity),
+  Chao1_16S_total = chao1_total
+)
+
+
+### --- BACTERIAL RICHNESS --- ###
+
+# Filter taxonomy table to include only OTUs classified as Bacteria
+taxonomy_bacteria <- taxonomy_16s_phy %>%
+  filter(Domain == "Bacteria")
+
+# Keep only bacterial OTUs from OTU table
+OTU_table_16s_bacteria <- OTU_table_16s_phy %>%
+  semi_join(taxonomy_bacteria, by = "OTU_ID")
+
+# Transpose and clean bacterial OTU table
+OTU_table_16s_bact_div <- t(OTU_table_16s_bacteria)[-1, ]
+OTU_table_16s_bact_numeric <- apply(OTU_table_16s_bact_div, 2, as.numeric)
+
+# Calculate Chao1 richness for bacteria
+chao1_bact <- estimateR(OTU_table_16s_bact_numeric)["S.chao1", ]
+
+# Create dataframe for merging
+chao1_df_bact <- data.frame(
+  Sample = rownames(OTU_table_16s_bact_div),
+  Chao1_16S_bacteria = chao1_bact
+)
+
+
+### --- ARCHAEAL RICHNESS --- ###
+
+# Filter taxonomy to only include Archaea
+taxonomy_archaea <- taxonomy_16s_phy %>%
+  filter(Domain == "Archaea")
+
+# Keep only archaeal OTUs from OTU table
+OTU_table_16s_archaea <- OTU_table_16s_phy %>%
+  semi_join(taxonomy_archaea, by = "OTU_ID")
+
+# Transpose and clean archaeal OTU table
+OTU_table_16s_arch_div <- t(OTU_table_16s_archaea)[-1, ]
+OTU_table_16s_arch_numeric <- apply(OTU_table_16s_arch_div, 2, as.numeric)
+
+# Calculate Chao1 richness for archaea
+chao1_arch <- estimateR(OTU_table_16s_arch_numeric)["S.chao1", ]
+
+# Create dataframe for merging
+chao1_df_arch <- data.frame(
+  Sample = rownames(OTU_table_16s_arch_div),
+  Chao1_16S_archaea = chao1_arch
+)
+
+
+### --- MERGE ALL CHAO1 RICHNESS VALUES INTO METADATA --- ###
+
+# Merge total, bacterial, and archaeal richness into metadata
+metadata_AS <- metadata_AS %>%
+  left_join(chao1_df_total, by = "Sample") %>%
+  left_join(chao1_df_bact, by = "Sample") %>%
+  left_join(chao1_df_arch, by = "Sample")
+
+#Results: 5297 total bacteria ASVs. 801 ASV for archea
+
+# ----- ITS ####
 # Filter taxonomy to include only fungi from ITS taxonomy data
 Taxonomy_ITS_fungi <- taxonomy_ITS %>%
   dplyr::filter(kingdom == "Fungi")
@@ -1048,8 +1131,541 @@ chao1_values_ITS <- estimateR(OTU_table_ITS_fungi_diversity)["S.chao1", ]
 # Convert Chao1 vector to data frame with sample names
 chao1_df <- data.frame(Sample = rownames(OTU_table_ITS_fungi_diversity), Chao1 = chao1_values_ITS)
 
+# Rename Chao1 column in chao1_df to Chao1_ITS
+names(chao1_df)[names(chao1_df) == "Chao1"] <- "Chao1_fungi"
+
+#Add to metadata
+metadata_AS <- merge(metadata_AS, chao1_df, by = "Sample", all.x = TRUE)
+
 # Merge the Chao1 richness estimates with sample metadata for downstream analysis
-metadata_ITS <- merge(chao1_df, metadata_ITS, by = "Sample")
+#metadata_ITS <- merge(chao1_df, metadata_ITS, by = "Sample")
+
+
+#comined plot
+# Calculate scale factor for rescaling bacteria and total 16S richness
+scale_factor <- max(metadata_AS$Chao1_16S_archaea, na.rm = TRUE) / max(metadata_AS$Chao1_16S_bacteria, na.rm = TRUE)
+
+dual_richness_plot <- ggplot(metadata_AS, aes(x = Depth..m.)) + 
+  
+  # Archaea (primary y-axis)
+  geom_line(aes(y = Chao1_16S_archaea, color = factor("Archaea", levels = c("Fungi", "Archaea", "Bacteria", "Bacteria and Archaea"))), size = 1.2) +
+  geom_point(aes(y = Chao1_16S_archaea, color = factor("Archaea", levels = c("Fungi", "Archaea", "Bacteria", "Bacteria and Archaea"))), size = 2) +
+  
+  # Fungi (primary y-axis)
+  geom_line(aes(y = Chao1_fungi, color = factor("Fungi", levels = c("Fungi", "Archaea", "Bacteria", "Bacteria and Archaea"))), size = 1.2) +
+  geom_point(aes(y = Chao1_fungi, color = factor("Fungi", levels = c("Fungi", "Archaea", "Bacteria", "Bacteria and Archaea"))), size = 2) +
+  
+  # Bacteria (secondary y-axis, rescaled)
+  geom_line(aes(y = Chao1_16S_bacteria * scale_factor, color = factor("Bacteria", levels = c("Fungi", "Archaea", "Bacteria", "Bacteria and Archaea"))), size = 1.2) +
+  geom_point(aes(y = Chao1_16S_bacteria * scale_factor, color = factor("Bacteria", levels = c("Fungi", "Archaea", "Bacteria", "Bacteria and Archaea"))), size = 2) +
+  
+  # Total 16S (Bacteria + Archaea)
+  geom_line(aes(y = Chao1_16S_total * scale_factor, color = factor("Bacteria and Archaea", levels = c("Fungi", "Archaea", "Bacteria", "Bacteria and Archaea"))), size = 1.2) +
+  geom_point(aes(y = Chao1_16S_total * scale_factor, color = factor("Bacteria and Archaea", levels = c("Fungi", "Archaea", "Bacteria", "Bacteria and Archaea"))), size = 2) +
+  
+  # Y axis and secondary y-axis
+  scale_y_continuous(
+    name = "Fungal OTU Richness\nArchaeal ASV Richness",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Bacterial ASV Richness\nBacterial and Archaeal ASV Richness")
+  ) +
+  
+  # Legend colors and title
+  scale_color_manual(
+    values = c(
+      "Fungi" = "forestgreen",
+      "Archaea" = "firebrick",
+      "Bacteria" = "steelblue",
+      "Bacteria and Archaea" = "purple"
+    )
+  ) +
+  
+  labs(
+    x = "Depth (m)",
+    color = "Taxonomic Group"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "top",
+    legend.title = element_text(size = 16, face = "bold"),
+    legend.text = element_text(size = 14),
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    panel.background = element_blank(),
+    axis.title.y = element_text(size = 14),
+    axis.title.y.right = element_text(size = 14)
+  )
+
+
+# Print plot
+print(dual_richness_plot)
+
+
+
+
+
+#test for significance between richness trends
+cor.test(metadata_AS$Chao1_16S_total, metadata_AS$Chao1_fungi, method = "spearman")
+cor.test(metadata_AS$Chao1_16S_bacteria, metadata_AS$Chao1_fungi, method = "spearman")
+cor.test(metadata_AS$Chao1_16S_archaea, metadata_AS$Chao1_fungi, method = "spearman")
+#result: fungal richness is significantly positively correlated with total 16S abundance, but not with bacterial or archaeal richness alone. Neither are bacterial or archaeal richness together.
+
+
+
+
+# cor_values and p_values contain the correlations and p-values respectively
+
+#result, fungi richness is significntly positivly correlated with total 16S abundance, but not with bacterial or archaeal richnes alone. neither are bacterial or archaeal richnes together. 
+# fungal abundance is also positively correlated with ammonium.
+
+
+
+
+#---- Shannon -----
+# --- TOTAL 16S SHANNON DIVERSITY ---
+OTU_table_16s_diversity_numeric <- apply(OTU_table_16s_diversity, 2, as.numeric)
+
+shannon_total <- diversity(OTU_table_16s_diversity_numeric, index = "shannon")
+
+shannon_df_total <- data.frame(
+  Sample = rownames(OTU_table_16s_diversity),
+  Shannon_16S_total = shannon_total
+)
+
+
+# --- BACTERIAL SHANNON DIVERSITY ---
+OTU_table_16s_bact_numeric <- apply(OTU_table_16s_bact_div, 2, as.numeric)
+
+shannon_bact <- diversity(OTU_table_16s_bact_numeric, index = "shannon")
+
+shannon_df_bact <- data.frame(
+  Sample = rownames(OTU_table_16s_bact_div),
+  Shannon_16S_bacteria = shannon_bact
+)
+
+
+# --- ARCHAEAL SHANNON DIVERSITY ---
+OTU_table_16s_arch_numeric <- apply(OTU_table_16s_arch_div, 2, as.numeric)
+
+shannon_arch <- diversity(OTU_table_16s_arch_numeric, index = "shannon")
+
+shannon_df_arch <- data.frame(
+  Sample = rownames(OTU_table_16s_arch_div),
+  Shannon_16S_archaea = shannon_arch
+)
+
+
+# --- FUNGAL SHANNON DIVERSITY ---
+OTU_table_ITS_fungi_numeric <- apply(OTU_table_ITS_fungi_diversity, 2, as.numeric)
+
+shannon_fungi <- diversity(OTU_table_ITS_fungi_numeric, index = "shannon")
+
+shannon_df_fungi <- data.frame(
+  Sample = rownames(OTU_table_ITS_fungi_diversity),
+  Shannon_fungi = shannon_fungi
+)
+
+# Merge all Shannon diversity data frames into metadata_AS
+metadata_AS <- metadata_AS %>%
+  left_join(shannon_df_total, by = "Sample") %>%
+  left_join(shannon_df_bact, by = "Sample") %>%
+  left_join(shannon_df_arch, by = "Sample") %>%
+  left_join(shannon_df_fungi, by = "Sample")
+
+
+
+shannon_plot <- ggplot(metadata_AS, aes(x = Depth..m.)) + 
+  
+  # Archaea
+  geom_line(aes(y = Shannon_16S_archaea, color = "Archaea"), size = 1.2) +
+  geom_point(aes(y = Shannon_16S_archaea, color = "Archaea"), size = 2) +
+  
+  # Fungi
+  geom_line(aes(y = Shannon_fungi, color = "Fungi"), size = 1.2) +
+  geom_point(aes(y = Shannon_fungi, color = "Fungi"), size = 2) +
+  
+  # Bacteria
+  geom_line(aes(y = Shannon_16S_bacteria, color = "Bacteria"), size = 1.2) +
+  geom_point(aes(y = Shannon_16S_bacteria, color = "Bacteria"), size = 2) +
+  
+  # Bacteria and Archaea combined line
+  geom_line(aes(y = Shannon_16S_total, color = "Bacteria and Archaea"), size = 1.2) +
+  geom_point(aes(y = Shannon_16S_total, color = "Bacteria and Archaea"), size = 2) +
+  
+  # Y axis label
+  scale_y_continuous(name = "Shannon") +
+  
+  # Colors for groups
+  scale_color_manual(values = c(
+    "Bacteria" = "steelblue",
+    "Archaea" = "firebrick",
+    "Fungi" = "forestgreen",
+    "Bacteria and Archaea" = "purple"
+  )) +
+  
+  # Labels and theme
+  labs(x = "Depth (m)", color = "Taxonomic Group") +
+  
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "top",
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    panel.background = element_blank(),
+    axis.title.y = element_text(size = 14)
+  )
+
+# Print plot
+print(shannon_plot)
+
+
+
+
+
+
+
+
+##### PIE #####
+# Function to calculate Hurlbert's PIE for a single sample vector
+calc_hurlbert_pie <- function(abundances) {
+  N <- sum(abundances)
+  if (N <= 1) {
+    return(NA)  # Undefined if N <= 1
+  }
+  p <- abundances / N
+  pie <- (N / (N - 1)) * (1 - sum(p^2))
+  return(pie)
+}
+
+
+# --- TOTAL 16S Hurlbert's PIE ---
+OTU_table_16s_diversity_numeric <- apply(OTU_table_16s_diversity, 2, as.numeric)
+
+pie_total <- apply(OTU_table_16s_diversity_numeric, 1, calc_hurlbert_pie)
+
+pie_df_total <- data.frame(
+  Sample = rownames(OTU_table_16s_diversity),
+  Hurlbert_PIE_16S_total = pie_total
+)
+
+
+# --- BACTERIAL Hurlbert's PIE ---
+OTU_table_16s_bact_numeric <- apply(OTU_table_16s_bact_div, 2, as.numeric)
+
+pie_bact <- apply(OTU_table_16s_bact_numeric, 1, calc_hurlbert_pie)
+
+pie_df_bact <- data.frame(
+  Sample = rownames(OTU_table_16s_bact_div),
+  Hurlbert_PIE_16S_bacteria = pie_bact
+)
+
+
+# --- ARCHAEAL Hurlbert's PIE ---
+OTU_table_16s_arch_numeric <- apply(OTU_table_16s_arch_div, 2, as.numeric)
+
+pie_arch <- apply(OTU_table_16s_arch_numeric, 1, calc_hurlbert_pie)
+
+pie_df_arch <- data.frame(
+  Sample = rownames(OTU_table_16s_arch_div),
+  Hurlbert_PIE_16S_archaea = pie_arch
+)
+
+
+# --- FUNGAL Hurlbert's PIE ---
+OTU_table_ITS_fungi_numeric <- apply(OTU_table_ITS_fungi_diversity, 2, as.numeric)
+
+pie_fungi <- apply(OTU_table_ITS_fungi_numeric, 1, calc_hurlbert_pie)
+
+pie_df_fungi <- data.frame(
+  Sample = rownames(OTU_table_ITS_fungi_diversity),
+  Hurlbert_PIE_fungi = pie_fungi
+)
+
+
+# Merge all into metadata_AS
+metadata_AS <- metadata_AS %>%
+  left_join(pie_df_total, by = "Sample") %>%
+  left_join(pie_df_bact, by = "Sample") %>%
+  left_join(pie_df_arch, by = "Sample") %>%
+  left_join(pie_df_fungi, by = "Sample")
+
+
+
+
+
+evenness_plot <- ggplot(metadata_AS, aes(x = Depth..m.)) + 
+  
+  # Archaea
+  geom_line(aes(y = Hurlbert_PIE_16S_archaea, color = "Archaea"), size = 1.2) +
+  geom_point(aes(y = Hurlbert_PIE_16S_archaea, color = "Archaea"), size = 2) +
+  
+  # Fungi
+  geom_line(aes(y = Hurlbert_PIE_fungi, color = "Fungi"), size = 1.2) +
+  geom_point(aes(y = Hurlbert_PIE_fungi, color = "Fungi"), size = 2) +
+  
+  # Bacteria
+  geom_line(aes(y = Hurlbert_PIE_16S_bacteria, color = "Bacteria"), size = 1.2) +
+  geom_point(aes(y = Hurlbert_PIE_16S_bacteria, color = "Bacteria"), size = 2) +
+  
+  # Combined Bacteria and Archaea
+  geom_line(aes(y = Hurlbert_PIE_16S_total, color = "Bacteria and Archaea"), size = 1.2) +
+  geom_point(aes(y = Hurlbert_PIE_16S_total, color = "Bacteria and Archaea"), size = 2) +
+  
+  # Y axis label
+  scale_y_continuous(name = "Evenness (PIE)") +
+  
+  # Colors for groups
+  scale_color_manual(values = c(
+    "Bacteria" = "steelblue",
+    "Archaea" = "firebrick",
+    "Fungi" = "forestgreen",
+    "Bacteria and Archaea" = "purple"
+  )) +
+  
+  # Labels and theme
+  labs(x = "Depth (m)", color = "Taxonomic Group") +
+  
+  theme_minimal(base_size = 14) +
+  
+  theme(
+    legend.position = "top",
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    panel.background = element_blank(),
+    axis.title.y = element_text(size = 14)
+  )
+
+print(evenness_plot)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#----Distance Decay -----
+
+# ------------------------------------
+# PREP: Metadata & Coordinates
+# ------------------------------------
+
+rownames(metadata_AS) <- metadata_AS$Sample
+coords <- metadata_AS[, c("longitude", "latitude")]
+
+# ------------------------------------
+# 1. FUNGI (ITS)
+# ------------------------------------
+
+# Prepare & rarefy ITS
+otu_counts_ITS <- OTU_table_ITS_fungi[, -1]
+rownames(otu_counts_ITS) <- OTU_table_ITS_fungi[[1]]
+otu_counts_mat_ITS <- as.matrix(otu_counts_ITS)
+mode(otu_counts_mat_ITS) <- "numeric"
+otu_counts_mat_ITS_t <- t(otu_counts_mat_ITS)
+otu_rarefied_ITS_t <- rrarefy(otu_counts_mat_ITS_t, sample = min(rowSums(otu_counts_mat_ITS_t)))
+otu_rarefied_ITS <- t(otu_rarefied_ITS_t)
+
+# Bray-Curtis similarity
+bc_sim_ITS <- 1 - as.matrix(vegdist(t(otu_rarefied_ITS), method = "bray"))
+geo_dist_ITS <- distm(coords[colnames(otu_rarefied_ITS), ], fun = distHaversine) / 1000
+pairs_ITS <- combn(colnames(otu_rarefied_ITS), 2, simplify = FALSE)
+
+# Ensure dimnames are set
+samples_ITS <- colnames(otu_rarefied_ITS)
+rownames(bc_sim_ITS) <- samples_ITS
+colnames(bc_sim_ITS) <- samples_ITS
+
+rownames(geo_dist_ITS) <- samples_ITS
+colnames(geo_dist_ITS) <- samples_ITS
+
+
+decay_df_ITS <- do.call(rbind, lapply(pairs_ITS, function(pair) {
+  i <- pair[1]; j <- pair[2]
+  data.frame(Sample1 = i, Sample2 = j,
+             Geo_Distance_km = geo_dist_ITS[i, j],
+             Bray_Curtis_Similarity = bc_sim_ITS[i, j],
+             Group = "Fungi")
+}))
+
+
+# ------------------------------------
+# 2. TOTAL 16S (Rarefy full table first)
+# ------------------------------------
+otu_counts_16S <- OTU_table_16s_phy[, -1]
+rownames(otu_counts_16S) <- OTU_table_16s_phy[[1]]
+otu_mat_16S <- as.matrix(otu_counts_16S)
+mode(otu_mat_16S) <- "numeric"
+otu_mat_16S_t <- t(otu_mat_16S)
+otu_rarefied_16S_t <- rrarefy(otu_mat_16S_t, sample = min(rowSums(otu_mat_16S_t)))
+otu_rarefied_16S <- t(otu_rarefied_16S_t)
+
+samples_total <- colnames(otu_rarefied_16S)
+
+bc_sim_total <- 1 - as.matrix(vegdist(t(otu_rarefied_16S), method = "bray"))
+rownames(bc_sim_total) <- samples_total
+colnames(bc_sim_total) <- samples_total
+
+geo_dist_total <- distm(coords[samples_total, ], fun = distHaversine) / 1000
+rownames(geo_dist_total) <- samples_total
+colnames(geo_dist_total) <- samples_total
+
+pairs_total <- combn(samples_total, 2, simplify = FALSE)
+
+decay_df_total <- do.call(rbind, lapply(pairs_total, function(pair) {
+  i <- pair[1]; j <- pair[2]
+  data.frame(Sample1 = i, Sample2 = j,
+             Geo_Distance_km = geo_dist_total[i, j],
+             Bray_Curtis_Similarity = bc_sim_total[i, j],
+             Group = "Total_16S")
+}))
+
+# ------------------------------------
+# 3. BACTERIA (subset from rarefied total 16S)
+# ------------------------------------
+bact_otus <- taxonomy_bacteria %>%
+  pull(OTU_ID) %>%
+  intersect(rownames(otu_rarefied_16S))
+
+otu_bact <- otu_rarefied_16S[bact_otus, ]
+samples_bact <- colnames(otu_bact)
+
+bc_sim_bact <- 1 - as.matrix(vegdist(t(otu_bact), method = "bray"))
+rownames(bc_sim_bact) <- samples_bact
+colnames(bc_sim_bact) <- samples_bact
+
+geo_dist_bact <- distm(coords[samples_bact, ], fun = distHaversine) / 1000
+rownames(geo_dist_bact) <- samples_bact
+colnames(geo_dist_bact) <- samples_bact
+
+pairs_bact <- combn(samples_bact, 2, simplify = FALSE)
+
+decay_df_bact <- do.call(rbind, lapply(pairs_bact, function(pair) {
+  i <- pair[1]; j <- pair[2]
+  data.frame(Sample1 = i, Sample2 = j,
+             Geo_Distance_km = geo_dist_bact[i, j],
+             Bray_Curtis_Similarity = bc_sim_bact[i, j],
+             Group = "Bacteria")
+}))
+
+# ------------------------------------
+# 4. ARCHAEA (subset from rarefied total 16S)
+# ------------------------------------
+arch_otus <- taxonomy_archaea %>%
+  pull(OTU_ID) %>%
+  intersect(rownames(otu_rarefied_16S))
+
+otu_arch <- otu_rarefied_16S[arch_otus, ]
+samples_arch <- colnames(otu_arch)
+
+bc_sim_arch <- 1 - as.matrix(vegdist(t(otu_arch), method = "bray"))
+rownames(bc_sim_arch) <- samples_arch
+colnames(bc_sim_arch) <- samples_arch
+
+geo_dist_arch <- distm(coords[samples_arch, ], fun = distHaversine) / 1000
+rownames(geo_dist_arch) <- samples_arch
+colnames(geo_dist_arch) <- samples_arch
+
+pairs_arch <- combn(samples_arch, 2, simplify = FALSE)
+
+decay_df_arch <- do.call(rbind, lapply(pairs_arch, function(pair) {
+  i <- pair[1]; j <- pair[2]
+  data.frame(Sample1 = i, Sample2 = j,
+             Geo_Distance_km = geo_dist_arch[i, j],
+             Bray_Curtis_Similarity = bc_sim_arch[i, j],
+             Group = "Archaea")
+}))
+
+# ------------------------------------
+# COMBINE ALL DECAY DATAFRAMES
+# ------------------------------------
+decay_all <- bind_rows(decay_df_total, decay_df_bact, decay_df_arch, decay_df_ITS)
+
+decay_all$Group <- recode(decay_all$Group, "Total_16S" = "Bacteria and Archaea")
+
+
+
+combined_decay <- ggplot(decay_all, aes(x = Geo_Distance_km, y = Bray_Curtis_Similarity, color = Group, fill = Group)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_smooth(
+    method = "lm",
+    se = TRUE,
+    linetype = "solid",
+    size = 1,
+    alpha = 0.15
+  ) +
+  labs(
+    x = "Geographic Distance (km)",
+    y = "Community Similarity",
+    color = "Taxonomic Group",
+    fill = "Taxonomic Group"
+  ) +
+  scale_color_manual(values = c(
+    "Bacteria and Archaea" = "purple",
+    "Bacteria" = "steelblue",
+    "Archaea" = "firebrick",
+    "Fungi" = "forestgreen"
+  )) +
+  scale_fill_manual(values = c(
+    "Bacteria and Archaea" = alpha("purple", 0.15),
+    "Bacteria" = alpha("steelblue", 0.15),
+    "Archaea" = alpha("firebrick", 0.15),
+    "Fungi" = alpha("forestgreen", 0.15)
+  )) +
+  coord_cartesian(ylim = c(0, 0.3)) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    panel.background = element_blank()
+  )
+
+
+
+
+
+#linear models of decay
+
+# Group-wise linear models
+slopes_by_group <- decay_all %>%
+  group_by(Group) %>%
+  do(tidy(lm(Bray_Curtis_Similarity ~ Geo_Distance_km, data = .))) %>%
+  filter(term == "Geo_Distance_km")  # Only keep the slope term
+
+print(slopes_by_group)
+
+# Group-wise linear models
+slopes_by_group <- decay_all %>%
+  group_by(Group) %>%
+  do(tidy(lm(Bray_Curtis_Similarity ~ Geo_Distance_km, data = .))) %>%
+  filter(term == "Geo_Distance_km")  # Only keep the slope term
+
+print(slopes_by_group)
+
+
+
+
+
+
+
 
 #### Calculate Shannon Diversity ####
 
@@ -1068,355 +1684,135 @@ shannon <- diversity(shannon_otu_rarefied, index = "shannon")
 # Append Shannon diversity values to the metadata by matching sample names
 metadata_ITS$Shannon <- shannon[match(metadata_ITS$Sample, names(shannon))]
 
-#### Calculate Evenness ####
 
-# Calculate observed richness (number of OTUs per sample)
-richness_ITS <- specnumber(OTU_table_ITS_fungi_diversity)
+#----Combined plot -----
+# Get ranges
+decay_df <- merge(decay_df_ITS, decay_df_16s, 
+                  by = c("Sample1", "Sample2", "Geo_Distance_km"),
+                  suffixes = c("_ITS", "_16S"))
 
-# Compute Pielou's Evenness as Shannon diversity divided by log of richness
-evenness_ITS <- shannon / log(richness_ITS)
+range_ITS <- range(decay_df$Bray_Curtis_Similarity_ITS, na.rm = TRUE)
+range_16S <- range(decay_df$Bray_Curtis_Similarity_16S, na.rm = TRUE)
 
-# Add Evenness values to the metadata by matching sample names
-metadata_ITS$Evenness <- evenness_ITS[match(metadata_ITS$Sample, rownames(OTU_table_ITS_fungi_diversity))]
+decay_df$Bray_Curtis_16S_rescaled <- scales::rescale(decay_df$Bray_Curtis_Similarity_16S,
+                                                     to = range_ITS,
+                                                     from = range_16S)
 
-#### Phylogenetic Dispersion ####
 
-# Load OTU table and taxonomy data
-pd_otu <- read.csv("ITS2_OTU_table_trimmed.csv", row.names = 1)
-pd_tax <- read.csv("ITS2/cleaned_taxonomy_blastn_ITS_final.csv", row.names = 1)
-
-# Filter taxonomy to keep only fungi OTUs
-pd_tax <- pd_tax %>% dplyr::filter(kingdom == "Fungi")
-
-# Subset OTU table to include only OTUs present in filtered taxonomy
-pd_otu <- pd_otu[rownames(pd_otu) %in% rownames(pd_tax), ]
-pd_tax <- pd_tax[rownames(pd_tax) %in% rownames(pd_otu), ]
-
-# Replace NA or empty taxonomy cells with "Unclassified"
-pd_tax[is.na(pd_tax)] <- "Unclassified"
-pd_tax[pd_tax == ""] <- "Unclassified"
-
-# Export taxonomy for tree construction (Perl script input)
-write.table(pd_tax,
-            file = "taxonomy_for_tree.tsv",
-            sep = "\t",
-            quote = FALSE,
-            row.names = TRUE,
-            col.names = FALSE)
-
-# Read phylogenetic tree generated externally (newick format)
-ITS_tree <- read.tree("tree.nwk")
-
-# Transpose OTU table to samples as rows for phylogenetic analysis
-pd_otu_t <- t(pd_otu)
-
-# Prune tree and OTU table to ensure they contain the same taxa
-pruned_result <- prune.sample(pd_otu_t, ITS_tree)
-pruned_tree <- pruned_result
-taxa_in_tree <- pruned_tree$tip.label
-
-# Subset OTU table to match pruned tree taxa
-pruned_otu <- pd_otu_t[, taxa_in_tree, drop = FALSE]
-
-# Fix branch lengths to uniform value (if necessary)
-pruned_tree$edge.length <- rep(60, length(pruned_tree$edge.length))
-
-# Calculate phylogenetic diversity (PD) per sample
-pd_results <- pd(pruned_otu, pruned_tree) %>%
-  dplyr::mutate(Sample = rownames(.)) %>%
-  dplyr::select(Sample, PD)
-
-# Merge PD results with metadata
-metadata_ITS <- merge(pd_results, metadata_ITS, by = "Sample")
-
-# Calculate standardized effect size of PD (ses.pd) using taxa.labels null model
-sespd_results <- ses.pd(pd_otu_t, ITS_tree, null.model = "taxa.labels", runs = 999)
-
-# Format ses.pd results for downstream use
-sespd_df <- data.frame(
-  Sample = rownames(pd_otu_t),
-  SES_PD_Z = sespd_results$pd.obs.z,
-  SES_PD_P = sespd_results$pd.obs.p,
-  fungal_OTUs = sespd_results$ntaxa
-)
-
-# Calculate phylogenetic distance matrix from tree
-phydist <- cophenetic(ITS_tree)
-
-# Calculate standardized effect size of mean pairwise distance (ses.mpd)
-ses.mpd.result <- ses.mpd(
-  pd_otu_t,
-  phydist,
-  null.model = "taxa.labels",
-  abundance.weighted = FALSE,
-  runs = 999
-)
-ses.mpd_df <- data.frame(
-  Sample = rownames(pd_otu_t),
-  SES_MPD_Z = ses.mpd.result$mpd.obs.z,
-  SES_MPD_P = ses.mpd.result$mpd.obs.p
-)
-
-# Calculate standardized effect size of mean nearest taxon distance (ses.mntd)
-ses.mntd.result <- ses.mntd(
-  pd_otu_t, 
-  phydist, 
-  null.model = "taxa.labels",
-  abundance.weighted = FALSE, 
-  runs = 999
-)
-ses.mntd_df <- data.frame(
-  Sample = rownames(pd_otu_t),
-  SES_MNTD_Z = ses.mntd.result$mntd.obs.z,
-  SES_MNTD_P = ses.mntd.result$mntd.obs.p
-)
-
-# Combine all phylogenetic dispersion metrics by sample
-combined_pd_results <- pd_results %>%
-  left_join(sespd_df, by = "Sample") %>%
-  left_join(ses.mpd_df, by = "Sample") %>%
-  left_join(ses.mntd_df, by = "Sample")
-
-# Merge combined phylogenetic metrics with metadata
-metadata_ITS <- merge(combined_pd_results, metadata_ITS, by = "Sample")
-
-#### Genetic Dissimilarity ####
-
-# Load percent identity data generated from BLASTn results (final_blastn_taxonmy_ITS.R)
-ITS_per_ident <- read.csv("ITS2/highest_%identity_per_otu.csv")
-
-# Filter percent identity data to keep only fungal OTUs present in taxonomy
-ITS_per_ident <- ITS_per_ident %>%
-  semi_join(Taxonomy_ITS_fungi, by = "OTU_ID")
-
-# Merge filtered OTU abundance table with percent identity data by OTU_ID
-ITS_per_ident <- merge(OTU_table_ITS_fungi, ITS_per_ident, by = "OTU_ID")
-
-# Identify sample columns in merged table (exclude OTU_ID and percent_identity)
-site_columns <- setdiff(names(ITS_per_ident), c("OTU_ID", "percent_identity"))
-
-# Calculate unweighted average percent identity per sample (only OTUs present)
-avg_pid_unweighted <- sapply(site_columns, function(site) {
-  present <- ITS_per_ident[[site]] > 0                     # Identify OTUs present in this sample
-  mean(ITS_per_ident$percent_identity[present], na.rm = TRUE)  # Mean percent identity of present OTUs
-})
-
-# Convert unweighted averages to data frame with sample names
-avg_pid_unweighted_df <- data.frame(
-  site = names(avg_pid_unweighted),
-  unweighted_avg_percent_identity = as.numeric(avg_pid_unweighted)
-)
-
-# Rename column for consistency and merge into metadata
-names(avg_pid_unweighted_df)[names(avg_pid_unweighted_df) == "site"] <- "Sample"
-metadata_ITS <- merge(metadata_ITS, avg_pid_unweighted_df, by = "Sample", all.x = TRUE)
-
-# Calculate abundance-weighted average percent identity per sample
-avg_pid_weighted <- sapply(site_columns, function(site) {
-  abundances <- ITS_per_ident[[site]]
-  total_abundance <- sum(abundances, na.rm = TRUE)
+ggplot(decay_df, aes(x = Geo_Distance_km)) +
+  # ITS similarity points and line with blue shadow
+  geom_point(aes(y = Bray_Curtis_Similarity_ITS), color = "blue", alpha = 0.6, size = 2) +
+  geom_smooth(aes(y = Bray_Curtis_Similarity_ITS), method = "lm", color = "blue", linetype = "dashed", fill = "lightblue", alpha = 0.3) +
   
-  # Return NA if no abundance; else weighted mean of percent identity
-  if (total_abundance == 0) {
-    NA
-  } else {
-    weighted.mean(ITS_per_ident$percent_identity, w = abundances, na.rm = TRUE)
-  }
-})
-
-# Convert weighted averages to data frame and rename column
-avg_pid_weighted_df <- data.frame(
-  site = names(avg_pid_weighted),
-  weighted_avg_percent_identity = as.numeric(avg_pid_weighted)
-)
-
-names(avg_pid_weighted_df)[names(avg_pid_weighted_df) == "site"] <- "Sample"
-
-# Merge weighted averages into metadata
-metadata_ITS <- merge(metadata_ITS, avg_pid_weighted_df, by = "Sample", all.x = TRUE)
-
-# Convert similarity metrics to dissimilarity by subtracting from 100
-metadata_ITS$unweighted_avg_percent_identity <- 100 - metadata_ITS$unweighted_avg_percent_identity
-metadata_ITS$weighted_avg_percent_identity <- 100 - metadata_ITS$weighted_avg_percent_identity
-
-
-
-#### Range per OTU ####
-# Calculate maximum distance (km) per OTU based on sites where OTU is present
-
-# Make sure metadata is keyed by site/sample
-# Move OTU_ID column to rownames if present
-if ("OTU_ID" %in% colnames(OTU_table_ITS_fungi)) {
-  rownames(OTU_table_ITS_fungi) <- OTU_table_ITS_fungi$OTU_ID
-  OTU_table_ITS_fungi$OTU_ID <- NULL
-}
-
-# Extract coordinates (latitude, longitude) for each sample
-coords <- metadata_ITS[, c("Sample", "latitude", "longitude")]
-rownames(coords) <- coords$Sample
-coords$Sample <- NULL
-
-# Function to calculate max range for a given set of sites
-calc_max_range <- function(sites_present) {
-  if(length(sites_present) < 2) {
-    return(0)  # range is zero if only one site
-  }
-  site_coords <- coords[sites_present, ]
-  dist_matrix <- distm(site_coords[, c("longitude", "latitude")], fun = distHaversine) / 1000  # meters to km
-  return(max(dist_matrix))
-}
-
-# For each OTU, identify sites where it is present
-otu_sites_list <- apply(OTU_table_ITS_fungi, 1, function(abund) {
-  sites <- colnames(OTU_table_ITS_fungi)[abund > 0]
-  return(sites)
-})
-
-# Calculate maximum geographic range per OTU
-otu_ranges <- sapply(otu_sites_list, calc_max_range)
-
-# Initialize vectors to store unweighted and weighted range per site
-unweighted_range_per_site <- numeric(ncol(OTU_table_ITS_fungi))
-weighted_range_per_site <- numeric(ncol(OTU_table_ITS_fungi))
-
-sites <- colnames(OTU_table_ITS_fungi)
-
-# Calculate unweighted and abundance-weighted average range per site
-for (i in seq_along(sites)) {
-  site <- sites[i]
+  # 16S similarity points and line with red shadow (rescaled)
+  geom_point(aes(y = Bray_Curtis_16S_rescaled), color = "red", alpha = 0.6, size = 2) +
+  geom_smooth(aes(y = Bray_Curtis_16S_rescaled), method = "lm", color = "red", linetype = "dotted", fill = "salmon", alpha = 0.3) +
   
-  # Abundance of all OTUs at this site
-  abundances <- OTU_table_ITS_fungi[, site]
-  
-  # Identify OTUs present at this site
-  present_otus <- abundances > 0
-  
-  if (sum(present_otus) == 0) {
-    unweighted_range_per_site[i] <- NA
-    weighted_range_per_site[i] <- NA
-    next
-  }
-  
-  # Unweighted mean of OTU ranges present at the site
-  unweighted_range_per_site[i] <- mean(otu_ranges[present_otus], na.rm = TRUE)
-  
-  # Weighted mean of OTU ranges weighted by their abundances at the site
-  weighted_range_per_site[i] <- weighted.mean(otu_ranges[present_otus], w = abundances[present_otus], na.rm = TRUE)
-}
-
-# Create data frame with unweighted and weighted range per site
-range_df <- data.frame(
-  site = sites,
-  unweighted_range_km = unweighted_range_per_site,
-  weighted_range_km = weighted_range_per_site
-)
-
-# Rename for consistency before merging with metadata
-names(range_df)[names(range_df) == "site"] <- "Sample"
-
-# Merge range data into metadata
-metadata_ITS <- merge(metadata_ITS, range_df, by = "Sample", all.x = TRUE)
-
-#### Plot Richness, Evenness, Shannon, Genetic Similarity, Range, PD, MPD vs Depth ####
-
-# Panel 1: Richness vs Depth
-richness_plot <- ggplot(metadata_ITS, aes(x = depth, y = Chao1)) +
-  geom_point(color = "steelblue", size = 3) +                      # Scatter plot points
-  geom_smooth(method = "lm", se = FALSE, color = "black",          # Linear regression trend line without confidence interval
-              linetype = "dashed") +
-  labs(y = "Richness") +                                            # Y-axis label
-  theme_minimal() +                                                 # Minimal theme for clean look
-  theme(
-    panel.grid.major = element_blank(),                            # Remove major grid lines
-    panel.grid.minor = element_blank(),                            # Remove minor grid lines
-    axis.line = element_line(color = "black", size = 0.5),         # Add axis lines in black
-    axis.title.x = element_blank()                                 # Remove x-axis title
-  )
-
-# Panel 1: Evenness vs Depth
-evenness_plot <- ggplot(metadata_ITS, aes(x = depth, y = Evenness)) +
-  geom_point(color = "steelblue", size = 3) +
-  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "dashed") +
-  labs(y = "Evenness") +
-  theme_minimal() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    axis.line = element_line(color = "black", size = 0.5),
-    axis.title.x = element_blank()
-  )
-
-# Panel 1: Shannon Diversity vs Depth
-beta_plot <- ggplot(metadata_ITS, aes(x = depth, y = shannon)) +
-  geom_point(color = "steelblue", size = 3) +
-  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "dashed") +
-  labs(x = "Sample Depth (m)", y = "Shannon Diversity") +          # X and Y axis labels
-  theme_minimal() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    axis.line = element_line(color = "black", size = 0.5)
-  )
-
-# Panel 2: Phylogenetic Dispersion (SES_MNTD_Z) vs Depth
-pd_plot <- ggplot(metadata_ITS, aes(x = depth, y = SES_MNTD_Z)) +
-  geom_point(color = "steelblue", size = 3) +
-  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "dashed") +
-  labs(y = "Phylogenetic Dispersion") +
-  theme_minimal() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    axis.line = element_line(color = "black", size = 0.5),
-    axis.title.x = element_blank()
-  )
-
-# Panel 2: Genetic Dissimilarity (weighted average percent identity) vs Depth
-gd_plot <- ggplot(metadata_ITS, aes(x = depth, y = weighted_avg_percent_identity)) +
-  geom_point(color = "steelblue", size = 3) +
-  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "dashed") +
-  labs(y = "Dissimilarity to Surface (%)") +
-  theme_minimal() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    axis.line = element_line(color = "black", size = 0.5),
-    axis.title.x = element_blank()
-  )
-
-# Panel 2: Range (weighted range in km) vs Depth
-range_plot <- ggplot(metadata_ITS, aes(x = depth, y = weighted_range_km)) +
-  geom_point(color = "steelblue", size = 3) +
-  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "dashed") +
-  labs(x = "Sample Depth (m)", y = "Range (km)") +
-  theme_minimal() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    axis.line = element_line(color = "black", size = 0.5)
-  )
-
-# Combine all six plots into a 2-column by 3-row layout with tags (A)-(F)
-combined_ITS_plot <- (richness_plot | pd_plot) /
-  (evenness_plot | gd_plot) /
-  (beta_plot | range_plot) +
-  plot_annotation(
-    tag_levels = 'A',
-    tag_prefix = "(",
-    tag_suffix = ")",
-    theme = theme(
-      plot.tag = element_text(size = 18, face = "bold")  # Customize tag font size and style
+  # Primary and secondary y-axis
+  scale_y_continuous(
+    name = "Bray-Curtis Similarity (ITS)",
+    sec.axis = sec_axis(
+      trans = ~ scales::rescale(., to = range_16S, from = range_ITS),
+      name = "Bray-Curtis Similarity (16S)"
     )
+  ) +
+  xlab("Geographic Distance (km)") +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.title.y.left = element_text(color = "blue"),
+    axis.title.y.right = element_text(color = "red")
   )
 
-# Print the combined plot to the output device
-combined_ITS_plot
 
-# Save the combined plot as an SVG file with specified dimensions
-ggsave("combined_ITS_plot.svg",
-       plot = combined_ITS_plot,
-       width = 15, height = 15, units = "in", device = "svg", limitsize = FALSE)
 
+
+
+# ITS linear model
+lm_ITS <- lm(Bray_Curtis_Similarity_ITS ~ Geo_Distance_km, data = decay_df)
+summary(lm_ITS)
+
+# 16S linear model
+lm_16S <- lm(Bray_Curtis_Similarity_16S ~ Geo_Distance_km, data = decay_df)
+summary(lm_16S)
+
+
+# Spearman correlations
+spearman_ITS <- cor.test(decay_df$Geo_Distance_km, decay_df$Bray_Curtis_Similarity_ITS, method = "spearman")
+spearman_16S <- cor.test(decay_df$Geo_Distance_km, decay_df$Bray_Curtis_Similarity_16S, method = "spearman")
+
+spearman_ITS
+spearman_16S
+
+
+##### Combined Community Plot #####
+#make plots without legends
+dual_richness_plot_nolegend <- dual_richness_plot + theme(legend.position = "none")
+shannon_plot_nolegend <- shannon_plot + theme(legend.position = "none")
+evenness_plot_nolegend <- evenness_plot + theme(legend.position = "none")
+combined_decay_nolegend <- combined_decay + theme(legend.position = "none")
+
+# 1. Extract the legend from one of the plots
+legend_grob <- cowplot::get_legend(
+  dual_richness_plot + theme(legend.position = "bottom")  # position doesn't matter for extraction
+)
+
+combined_community_plots <- (
+  (dual_richness_plot_nolegend + shannon_plot_nolegend) /
+    (evenness_plot_nolegend + combined_decay_nolegend) /
+    wrap_elements(legend_grob)
+) +
+  plot_annotation(
+    tag_levels = list(c("(A)", "(B)", "(C)", "(D)")),
+    theme = theme(
+      plot.title = element_text(size = 16, face = "bold"),
+      plot.tag = element_text(size = 30, face = "bold")
+    )
+  ) &
+  theme(plot.title.position = "plot")
+
+# Apply row heights
+combined_community_plots <- combined_community_plots + 
+  plot_layout(heights = c(1, 1, 0.1))
+
+# 3. Print or save
+print(combined_community_plots)
+
+
+
+#ggsave("combined_community_plots.pdf", plot = combined_community_plots, width = 17, height = 12)
+
+
+  
+#### Test Relationships between variables ####
+
+# Select only numeric columns
+numeric_data <- metadata_AS[, sapply(metadata_AS, is.numeric)]
+
+# Initialize matrices to store p-values and correlations
+n <- ncol(numeric_data)
+p_values <- matrix(NA, n, n, dimnames = list(colnames(numeric_data), colnames(numeric_data)))
+cor_values <- matrix(NA, n, n, dimnames = list(colnames(numeric_data), colnames(numeric_data)))
+
+# Run pairwise cor.test with Spearman method
+for(i in 1:n){
+  for(j in i:n){
+    test <- cor.test(numeric_data[[i]], numeric_data[[j]], method = "spearman", exact = FALSE)
+    cor_values[i,j] <- cor_values[j,i] <- test$estimate
+    p_values[i,j] <- p_values[j,i] <- test$p.value
+  }
+}
+View(p_values)
+View(cor_values)
+
+
+cor.test(metadata_AS$Total.Microbial.Abundance..cells.mL., metadata_AS$NPDOC, method = "spearman", conf.level = 0.95)
+
+
+# Or use the skimr package for a cleaner summary
+install.packages("skimr")
+library(skimr)
+skim(metadata_AS[, c("Total.Microbial.Abundance..cells.mL.", "NPDOC")])
+#### Metacoder/ Core Microbiome ####
 #### Metacoder ITS ####
 # only keep fungi
 taxonomy_ITS_meta <- taxonomy_ITS %>%
@@ -1524,7 +1920,7 @@ obj_ITS$data$tax_abund$culture_abund <- calc_taxon_abund(obj_ITS, "tax_data", co
 
 
 # Generate heat tree plot showing abundance and cultured status
-heat_tree(obj_ITS,
+heat_tree_ITS <- heat_tree(obj_ITS,
           node_label = taxon_names,
           node_size  = obj_ITS$data$tax_abund$total_abund,
           node_color = obj_ITS$data$tax_abund$culture_abund,
@@ -1535,11 +1931,15 @@ heat_tree(obj_ITS,
           edge_size = n_obs,
           node_size_range = c(0.009, 0.03),
           layout = "davidson-harel",              # primary layout algorithm
-          initial_layout = "reingold-tilford", 
-          output_file = "meta_coder_ITS_colored.pdf")
+          initial_layout = "reingold-tilford")
+
+
+#output_file = "meta_coder_ITS_fungi.pdf")
 
 
 
+
+#Let us remake the plot but only showing fungi (excludes the algae)
 
 #### Metacoder 18s ####
 
@@ -1553,7 +1953,7 @@ merged_table_18s <- left_join(OTU_table_18s, meta_18s_tax, by = "OTU_ID")
 merged_table_18s <- merged_table_18s %>%
   tidyr::unite("taxonomy", 6:11, sep = ";", remove = FALSE)
 
-# Drop the 'Surface.Control' column, presumably a control sample
+# Drop the 'Surface.Control' column, a control sample
 merged_table_18s <- merged_table_18s %>% dplyr::select(-Surface.Control)
 
 # Normalize read counts across three samples:
@@ -1582,7 +1982,7 @@ obj_18s$data$tax_abund <- calc_taxon_abund(obj_18s, "tax_data",
 obj_18s$data$tax_abund$total_abund <- rowSums(obj_18s$data$tax_abund[, c("Bull", "Mortensen", "West")])
 
 # Generate and save a heat tree plot visualizing taxon abundance
-heat_tree(obj_18s,
+heat_tree_18s <- heat_tree(obj_18s,
           node_label = taxon_names,                         # Labels for nodes are taxon names
           node_size = obj_18s$data$tax_abund$total_abund,  # Node size scaled by total abundance
           node_color = obj_18s$data$tax_abund$total_abund, # Node color scaled by total abundance
@@ -1591,11 +1991,931 @@ heat_tree(obj_18s,
           edge_size = n_obs,                                # Edge size proportional to number of OTUs
           node_size_range = c(0.009, 0.03),                 # Range of node sizes
           layout = "davidson-harel",                        # Primary layout algorithm
-          initial_layout = "reingold-tilford",              # Initial layout for optimization
-          output_file = "meta_coder_18s.pdf")               # Save plot directly to file
+          initial_layout = "reingold-tilford",  
+          edge_size_range = c(0.0005, 0.013))    # Initial layout for optimization
+   
+# output_file = "meta_coder_18s.pdf")               # Save plot directly to file
+
+#### Metacoder 16s ####
+#read in taxonomy and OTU data for 16S OTUs. Merge files
+merged_table_16s <- left_join(OTU_table_16s_phy, taxonomy_16s_phy, by = "OTU_ID")
+
+#Add in LUCA to connect bacteria and archea
+merged_table_16s <- cbind(
+  merged_table_16s[, 1:7],
+  LUCA = "LUCA",
+  merged_table_16s[, 8:ncol(merged_table_16s)]
+)
+
+
+#drop any rows with merged_table_16s$Domain == Unassigned
+merged_table_16s <- merged_table_16s %>%
+  filter(Domain != "Unassigned") %>%  # Remove rows where Domain is "Unassigned"
+  filter(!is.na(Domain))               # Also remove rows with NA in Domain
+
+
+# Add semicolon-separated taxonomy string by uniting taxonomy columns 6 through 11
+merged_table_16s <- merged_table_16s %>%
+  tidyr::unite("taxonomy", 8:11, sep = ";", remove = FALSE)
+
+# Normalize read counts across three samples:
+# Step 1: Calculate total reads per sample (columns 2 to 4)
+sample_totals_16s <- colSums(merged_table_16s[, 2:7])
+
+# Step 2: Find the smallest library size among samples
+min_depth_16s <- min(sample_totals_16s)
+
+# Step 3: Normalize each sample to the smallest depth by proportional scaling
+normalized_counts16s <- sweep(merged_table_16s[, 2:7], 2, sample_totals_16s, FUN = "/") * min_depth_16s
+
+# Step 4: Replace original counts with normalized counts in the data frame
+merged_table_16s[, 2:7] <- normalized_counts16s
+
+# Convert the merged data frame to metacoder taxmap format, specifying taxonomy column and separator
+obj_16s <- parse_tax_data(merged_table_16s,
+                          class_cols = "taxonomy",  # Column containing taxonomy string
+                          class_sep = ";")          # Taxonomic rank separator
+
+# Calculate taxon abundance across samples Bull, Mortensen, and West
+obj_16s$data$tax_abund <- calc_taxon_abund(obj_16s, "tax_data",
+                                           cols = c("Bull", "Mortensen", "West", "Horn", "Conant", "Greg"))
+
+# Calculate total abundance for each taxon across the three samples
+obj_16s$data$tax_abund$total_abund <- rowSums(obj_16s$data$tax_abund[, c("Bull", "Mortensen", "West", "Horn", "Conant", "Greg")])
+
+#remove LUCA label
+custom_labels <- taxon_names(obj_16s)
+custom_labels[custom_labels == "LUCA"] <- NA  # or "" to blank it
+heat_tree(obj_16s, node_label = custom_labels)
+
+
+# Generate and save a heat tree plot visualizing taxon abundance
+heat_tree_16s <- heat_tree(obj_16s,
+          node_label = custom_labels,                         # Labels for nodes are taxon names
+          node_size = obj_16s$data$tax_abund$total_abund,  # Node size scaled by total abundance
+          node_color = obj_16s$data$tax_abund$total_abund, # Node color scaled by total abundance
+          node_color_axis_label = "Total abundance",
+          edge_size_axis_label = "Number of ASVs",
+          edge_size = n_obs,                                # Edge size proportional to number of OTUs
+          node_size_range = c(0.009, 0.03),                 # Range of node sizes
+          initial_layout = "fr", layout = "da",
+          edge_size_range = c(0.0005, 0.013))
+
+#output_file = "meta_coder_16s.pdf")
+
+
+# ----------------- Merge Meta Coder Plots -----------------
+
+# Combine the three heat tree plots into a single layout
+combined_meta_plot <- (
+  heat_tree_ITS /
+    heat_tree_16s /
+    heat_tree_18s
+) +
+  plot_layout(ncol = 1, heights = c(5, 5, 5)) +  # Equal tallness
+  plot_annotation(
+    tag_levels = 'A',
+    tag_suffix = ")",
+    tag_prefix = "("
+  ) &
+  theme(
+    plot.tag = element_text(size = 18, face = "bold")
+  )
+
+combined_meta_plot
+
+
+#save as pdf
+ggsave("combined_meta_plot.pdf",
+       plot = combined_meta_plot,
+       width = 10, height = 18, units = "in", device = "pdf", limitsize = FALSE)
+
+
+
+
+
+
+
+
+
+
+
+#### Isolates ####
+#### Venn Diagram Fungi ITS####
+# ----------------- Filter ITS OTUs to Only Fungal Taxa and Generate Venn Diagram ####
+
+# Extract only fungal entries from the ITS taxonomy
+Taxonomy_ITS_fungi <- taxonomy_ITS %>%
+  dplyr::filter(kingdom == "Fungi")  # Keep only OTUs classified as fungi
+
+# Convert taxonomy to matrix format required by phyloseq::tax_table
+# Set OTU_IDs as row names
+taxonomy_ITS_mat <- as.matrix(column_to_rownames(Taxonomy_ITS_fungi, var = "OTU_ID"))
+tax_table_ITS_phy <- tax_table(taxonomy_ITS_mat)  # Create phyloseq tax_table object
+
+# Filter the ITS OTU table to keep only fungal OTUs based on taxonomy
+OTU_table_ITS_fungi <- OTU_table_ITS %>%
+  semi_join(Taxonomy_ITS_fungi, by = "OTU_ID")
+
+# Format the OTU table: set OTU IDs as row names and remove the OTU_ID column
+rownames(OTU_table_ITS_fungi) <- OTU_table_ITS_fungi[[1]]
+OTU_table_ITS_fungi <- OTU_table_ITS_fungi[, -1]
+
+# Convert OTU table to binary presence/absence format (TRUE if OTU > 0 reads)
+otu_table_binary <- OTU_table_ITS_fungi > 0
+
+# Generate a list of OTUs present in each site
+# The result is a named list where each site has a vector of OTU IDs
+otu_list_per_site <- apply(otu_table_binary, 2, function(col) {
+  rownames(otu_table_binary)[col]
+})
+
+# Define custom colors for each of the 6 sites for plotting
+venn_site_colors <- c("red", "blue", "green", "orange", "purple", "brown")
+names(venn_site_colors) <- names(otu_list_per_site)[1:6]  # Assign site names to colors
+
+# Plot Venn diagram showing OTU overlaps across sites
+venn_plot <- ggVennDiagram(
+  otu_list_per_site[1:6],       # use first 6 sites
+  label = "count",              # show OTU counts in each intersection
+  edge_size = 1.2,
+  edge_lty = "solid",
+  set_color = venn_site_colors, # custom site colors
+  set_name_size = 7             # increase font size of site names
+) +
+  theme_void() +                # minimal theme for cleaner look
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 16),
+    legend.text = element_text(size = 14)
+  ) +
+  labs(fill = "OTU Count")      # customize legend title
+
+# Display plot
+venn_plot
+
+# Save Venn diagram to SVG file
+#ggsave("venn_plot.svg",
+plot = venn_plot,
+width = 10, height = 9, units = "in", device = "svg", limitsize = FALSE)
+
+# ----------------- Identify Shared OTUs -----------------
+
+# Count the number of sites each OTU appears in (row sums of binary table)
+venn_otu_site_counts <- rowSums(otu_table_binary)
+
+# Extract OTUs present in all 6 sites
+otus_in_6_sites <- names(otu_site_counts[venn_otu_site_counts == 6])
+
+# Extract OTUs present in exactly 5 sites
+otus_in_5_sites <- names(otu_site_counts[venn_otu_site_counts == 5])
+
+# OTUs present in all sites:
+# "0fac242e0a12de35d46a2b2ac8dde906" — matches Irpex lacteus (100%), also isolated
+
+# OTUs present in 5 of 6 sites:
+# "827c3c02a67a4c50e5e10ec4100429f4" — 100% match to Saccharomyces sp. (uncultured)
+# "081720e5f9f84e1181553a050cbae7f2" — 92% match to Helotiales sp. (isolated)
+
+
+
+
+#### Venn Isolate vs Total OTUs (need to do) ####
+#### Plot Isolates Stacked Bar ####
+# Load isolate taxonomy data and subset relevant taxonomic columns
+isolates_data <- read.csv("all_isolates_trimmed.csv", row.names = NULL)
+isolates_taxonomy <- isolates_data[, c(1,10:15)]  # OTU_ID and taxonomic ranks
+
+# Set OTU_ID as row names and convert to matrix
+taxonomy_mat <- isolates_taxonomy %>%
+  column_to_rownames(var = "OTU_ID") %>%
+  as.matrix()
+
+# Convert matrix to tax_table and create phyloseq object
+tax_table_obj <- tax_table(taxonomy_mat)
+physeq_from_taxonomy <- phyloseq(tax_table_obj)
+
+# Extract taxonomy table as data frame
+tax_df_isolates <- as.data.frame(tax_table(physeq_from_taxonomy)) %>%
+  rownames_to_column("OTU_ID")
+
+
+# ----- Phylum-Level Stacked Bar Plot -----
+# Count number of OTUs per phylum
+rank_summaries_phylum <- 
+  tax_df_isolates %>%
+  group_by(Phylum) %>%
+  summarise(OTU_count = n()) %>%
+  ungroup() %>%
+  arrange(desc(OTU_count))
+
+# Plot phylum distribution as stacked bar
+Isolates_phylum <- ggplot(rank_summaries_phylum, aes(x = "", y = OTU_count, fill = Phylum)) +
+  geom_bar(stat = "identity", position = "stack", color = NA) +
+  scale_fill_manual(values = palette_phylum) +
+  theme_minimal() +
+  ylab("Isolate OTU Count") +
+  xlab("") +
+  labs(fill = "Phylum") +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
+    axis.title.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.title = element_text(size = 18),
+    legend.text = element_text(size = 16),
+    legend.key.size = unit(1.2, "cm"),
+  )
+
+
+# ----- Class-Level Stacked Bar Plot -----
+# Count number of OTUs per class
+rank_summaries_class <- 
+  tax_df_isolates %>%
+  group_by(Class) %>%
+  summarise(OTU_count = n()) %>%
+  ungroup() %>%
+  arrange(desc(OTU_count))
+
+# Plot class distribution
+Isolates_class <- ggplot(rank_summaries_class, aes(x = "", y = OTU_count, fill = Class)) +
+  geom_bar(stat = "identity", position = "stack", color = NA) +
+  scale_fill_manual(values = palette_class) +
+  theme_minimal() +
+  ylab("") +
+  xlab("") +
+  labs(fill = "Class") +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
+    axis.title.x = element_text(size = 16),
+    axis.text.y = element_text(size = 17, color = "black"),
+    legend.title = element_text(size = 18),
+    legend.text = element_text(size = 16),
+    legend.key.size = unit(1.2, "cm")
+  )
+
+Isolates_class
+
+
+# ----- Order-Level Stacked Bar Plot -----
+# Count OTUs by order and generate custom color palette
+rank_summaries_order <- 
+  tax_df_isolates %>%
+  group_by(Order) %>%
+  summarise(OTU_count = n()) %>%
+  ungroup() %>%
+  arrange(desc(OTU_count))
+
+rank_summaries_order$Order <- as.character(rank_summaries_order$Order)
+unique_orders <- setdiff(unique(rank_summaries_order$Order), "Unclassified")
+n_orders <- length(unique_orders)
+
+# Generate color palette for orders, with "Unclassified" as black
+full_palette_alphabet <- alphabet()
+clean_palette_order <- full_palette_alphabet[full_palette_alphabet != "#191919"]
+palette_colors_order <- clean_palette_order[1:n_orders]
+palette_orders <- setNames(palette_colors_order, unique_orders)
+palette_orders["Unclassified"] <- "black"
+
+rank_summaries_order$Order <- factor(rank_summaries_order$Order, levels = c(unique_orders, "Unclassified"))
+
+# Plot order distribution
+Isolates_order <- ggplot(rank_summaries_order, aes(x = "", y = OTU_count, fill = Order)) +
+  geom_bar(stat = "identity", position = "stack", color = NA) +
+  scale_fill_manual(values = palette_orders, guide = guide_legend(ncol = 2)) +
+  theme_minimal() +
+  ylab("") +
+  xlab("") +
+  labs(fill = "Order") +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
+    axis.title.y = element_text(size = 25),
+    axis.text.y = element_text(size = 17, color = "black"),
+    legend.title = element_text(size = 18),
+    legend.text = element_text(size = 16),
+    legend.key.size = unit(1.2, "cm")
+  )
+
+Isolates_order
+
+
+# ----- Family-Level Stacked Bar Plot -----
+# Count OTUs by family and assign custom colors
+rank_summaries_family <- 
+  tax_df_isolates %>%
+  group_by(Family) %>%
+  summarise(OTU_count = n()) %>%
+  ungroup() %>%
+  arrange(desc(OTU_count))
+
+unique_families <- setdiff(unique(rank_summaries_family$Family), "Unclassified")
+n_families <- length(unique_families)
+
+# Use Polychrome palette, ensuring enough unique colors
+full_palette_polychrome <- polychrome()
+clean_palette_family <- full_palette_polychrome[full_palette_polychrome != "#191919"]
+if (n_families > length(clean_palette_family)) {
+  stop("Not enough distinct colors after removing #191919 from Polychrome palette.")
+}
+
+palette_colors_families <- clean_palette_family[1:n_families]
+palette_family <- setNames(palette_colors_families, unique_families)
+palette_family["Unclassified"] <- "black"
+
+rank_summaries_family$Family <- factor(rank_summaries_family$Family, levels = c(unique_families, "Unclassified"))
+
+# Plot family distribution
+Isolates_family <- ggplot(rank_summaries_family, aes(x = "", y = OTU_count, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack", color = NA) +
+  scale_fill_manual(values = palette_family, guide = guide_legend(ncol = 2)) +
+  theme_minimal() +
+  ylab("Isolate OTU Count") +
+  xlab("") +
+  labs(fill = "Family") +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
+    axis.title.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.title = element_text(size = 18),
+    legend.text = element_text(size = 16),
+    legend.key.size = unit(1.2, "cm")
+  )
+
+
+# ----- Genus-Level Stacked Bar Plot -----
+# Count OTUs per genus and assign colors
+rank_summaries_genus <- 
+  tax_df_isolates %>%
+  group_by(Genus) %>%
+  summarise(OTU_count = n()) %>%
+  ungroup() %>%
+  arrange(desc(OTU_count))
+
+unique_genera <- setdiff(unique(rank_summaries_genus$Genus), "Unclassified")
+n_genera <- length(unique_genera)
+
+full_palette_polychrome <- polychrome()
+clean_palette_genus <- full_palette_polychrome[full_palette_polychrome != "#191919"]
+
+palette_colors_genus <- clean_palette_genus[1:n_genera]
+palette_genus <- setNames(palette_colors_genus, unique_genera)
+palette_genus["Unclassified"] <- "black"
+
+rank_summaries_genus$Genus <- factor(rank_summaries_genus$Genus, levels = c(unique_genera, "Unclassified"))
+
+# Plot genus distribution
+Isolates_genus <- ggplot(rank_summaries_genus, aes(x = "", y = OTU_count, fill = Genus)) +
+  geom_bar(stat = "identity", position = "stack", color = NA) +
+  scale_fill_manual(values = palette_genus, guide = guide_legend(ncol = 2)) +
+  theme_minimal() +
+  ylab("") +
+  xlab("") +
+  labs(fill = "Genus") +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
+    axis.title.x = element_text(size = 16),
+    axis.text.y = element_text(size = 17, color = "black"),
+    legend.title = element_text(size = 18),
+    legend.text = element_text(size = 16),
+    legend.key.size = unit(1.2, "cm")
+  )
+
+
+# ----- Combine All Taxonomic Plots -----
+# Assemble all stacked bar plots vertically using patchwork
+combined_stacked_bar_plot_isolates <-
+  (Isolates_phylum | Isolates_class | Isolates_order) /
+  (Isolates_family | Isolates_genus) +
+  plot_annotation(
+    tag_levels = 'A',
+    tag_prefix = "(",
+    tag_suffix = ")"
+  ) &
+  theme(
+    plot.tag = element_text(size = 20, face = "bold")
+  )
+
+combined_stacked_bar_plot_isolates
+
+# Save full composite figure to PDF
+ggsave("combined_stacked_bar_plot_isolates.pdf",
+       plot = combined_stacked_bar_plot_isolates,
+       width = 30, height = 20, units = "in", device = "pdf", limitsize = FALSE)
+
+# ----------------- Percent Similarity -----------------
+
+# 1. Create breaks and labels for similarity bins (74% to 100% by 1%)
+breaks <- seq(74, 100, by = 1)
+labels <- paste(head(breaks, -1), tail(breaks, -1), sep = "–")
+descending_labels <- rev(labels)  # descending order for x-axis
+
+# 2. Convert percent_identity_Unite to numeric (if needed)
+isolates$percent_identity_Unite <- as.numeric(as.character(isolates$percent_identity_Unite))
+
+# 3. Bin similarity values using cut()
+isolates$similarity_bin <- cut(
+  isolates$percent_identity_Unite,
+  breaks = breaks,
+  labels = labels,
+  include.lowest = TRUE,
+  right = FALSE
+)
+
+# 4. Set similarity_bin as a factor with descending levels for plotting order
+isolates$similarity_bin <- factor(isolates$similarity_bin, levels = descending_labels)
+
+# 5. Summarize counts per bin, ensure all bins present
+bin_counts <- isolates %>%
+  count(similarity_bin, name = "count") %>%
+  complete(similarity_bin = descending_labels, fill = list(count = 0)) %>%
+  mutate(
+    similarity_bin = factor(similarity_bin, levels = descending_labels),
+    bin_start = as.numeric(sub("–.*", "", as.character(similarity_bin))),
+    group = ifelse(bin_start < 98, "Novel Candidate Taxa", "Known Taxa"),
+    asterisk = ifelse(bin_start < 95 & count > 0, "*", NA)  # Flag bins for asterisk
+  ) %>%
+  arrange(similarity_bin)
+
+# 6. Select every 3rd label for x-axis breaks to reduce clutter
+x_breaks <- descending_labels[seq(1, length(descending_labels), by = 3)]
+
+# 7. Create dummy data frame for asterisk legend entry
+asterisk_legend <- data.frame(
+  similarity_bin = factor(NA, levels = descending_labels),
+  count = 0,
+  group = "* Phylogenetic Inference"
+)
+
+#plot
+isolates_similarity <- ggplot(bin_counts, aes(x = similarity_bin, y = count, fill = group)) +
+  geom_col() +
+  geom_text(aes(label = asterisk), vjust = -0.5, size = 5, fontface = "bold", na.rm = TRUE) +
+  geom_point(data = asterisk_legend, aes(x = similarity_bin, y = count, fill = group),
+             shape = 22, size = 5, color = "black", alpha = 0, show.legend = TRUE, inherit.aes = FALSE) +
+  scale_fill_manual(
+    values = c(
+      "Novel Candidate Taxa" = "red",
+      "Known Taxa" = "steelblue",
+      "* Phylogenetic Inference" = "white"
+    ),
+    breaks = c("Novel Candidate Taxa", "* Phylogenetic Inference"),
+    name = NULL
+  ) +
+  scale_x_discrete(drop = FALSE, breaks = x_breaks) +
+  labs(
+    x = "Similarity to UNITE Reference (%)",
+    y = "Isolate OTU Count"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),  # full box
+    axis.line = element_blank(),  # Remove axis lines to avoid doubling
+    axis.ticks.length.x = unit(0, "pt"),  # Remove x axis ticks to avoid confusion with border
+    legend.position = c(0.99, 0.99),
+    legend.justification = c("right", "top"),
+    legend.background = element_rect(fill = alpha('white', 0.6), color = "NA", size = 0),
+    legend.key.size = unit(1.2, "lines"),
+    legend.text = element_text(face = "bold")
+  ) +
+  guides(
+    fill = guide_legend(order = 1)
+  )
+
+print(isolates_similarity)
+
+
+
+# ----- Combine All Isolate Plots -----
+#read in jpeg version of photos of isolate images
+isolate_photos <- readJPEG("manuscript/isolate_photo.jpg")     # Read JPEG image
+isolate_photos <- rasterGrob(isolate_photos, interpolate = TRUE)  # Convert to grob
+
+#read in jpeg version of isolates venn (minor edits in adobe illustrator)
+isolate_amplicon_venn <- readJPEG("manuscript/updates_isoaltes_amplicon_venn.jpg")     # Read JPEG image
+isolate_amplicon_venn <- rasterGrob(isolate_amplicon_venn, interpolate = TRUE)  # Convert to grob
+
+
+# isolates in amplicon venn (These values were made in isolates_taxonomy_finalOTU_tables.R)
+# Define sets with meaningful names
+venn_data <- euler(c(
+  "ITS Amplicon" = 742,        # only in ITS
+  "Isolated" = 33,            # only in Isolated
+  "ITS Amplicon&Isolated" = 34  # in both
+))
+
+# Plot with custom labels
+isolates_venn <- plot(venn_data,
+     fills = list(fill = c("skyblue", "salmon"), alpha = 0.6),
+     labels = list(font = 2),
+     edges = TRUE,
+     quantities = TRUE)
+
+#plot all together
+# Wrap all grobs
+isolate_photos <- wrap_elements(full = isolate_photos)
+isolates_venn <- wrap_elements(full = isolates_venn)
+isolate_amplicon_venn <- wrap_elements(full = isolate_amplicon_venn)
+
+
+total_isolates_plot <- 
+  (Isolates_phylum | Isolates_class | Isolates_order) /         # Row 1
+  (Isolates_family | Isolates_genus) /                         # Row 2
+  (isolates_venn | isolate_photos) /                           # Row 3: B and C side-by-side
+  (isolates_similarity | isolate_amplicon_venn) +              # Row 4: D and E side-by-side
+  plot_layout(
+    nrow = 4,
+    heights = c(1, 1, 0.9, 1.2)   # Last row 1.5 times taller
+  ) +
+  plot_annotation(
+    tag_levels = list(c(
+      "(A) 1.", "2.", "3.",        # Row 1 tags
+      "4.", "5.",                  # Row 2 tags
+      "(B)", "(C)",                # Row 3 tags
+      "(D)", "(E)"                 # Row 4 tags
+    )),
+    tag_prefix = "",
+    tag_suffix = "",
+    theme = theme(plot.tag = element_text(size = 30, face = "bold"))
+  ) &
+  theme(
+    plot.tag = element_text(size = 30, face = "bold"),
+    plot.margin = margin(5, 5, 5, 5)
+  )
+
+
+#save as pdf
+ggsave("total_isolates_plot.pdf",
+       plot = total_isolates_plot,
+       width = 23, height = 36, units = "in", device = "pdf", limitsize = FALSE)
+
+
+
+
+
+#### Abundance ####
+
+# ----------------- Calculate ratios and their SEs -----------------
+metadata_AS <- metadata_AS %>%
+  rowwise() %>%
+  mutate(
+    # Vectors for triplicates as list-columns
+    fungi_qpcr_vec    = list(c(qPCR_fungi_1, qPCR_fungi_2, qPCR_fungi_3)),
+    bacteria_qpcr_vec = list(c(qPCR_bacteria_1, qPCR_bacteria_2, qPCR_bacteria_3)),
+    
+    fungi_mean   = mean(unlist(fungi_qpcr_vec), na.rm = TRUE),
+    bacteria_mean= mean(unlist(bacteria_qpcr_vec), na.rm = TRUE),
+    fungi_se     = sd(unlist(fungi_qpcr_vec), na.rm = TRUE) / sqrt(sum(!is.na(unlist(fungi_qpcr_vec)))),
+    bacteria_se  = sd(unlist(bacteria_qpcr_vec), na.rm = TRUE) / sqrt(sum(!is.na(unlist(bacteria_qpcr_vec)))),
+    
+    # 1. Cell ratio by qPCR (mean of triplicates)
+    Cell_ratio_qpcr = fungi_mean / bacteria_mean,
+    # 2. Cell ratio by enumeration
+    Cell_ratio_enum = Fungal_Abundance.cells.mL. / Total.Microbial.Abundance..cells.mL.,
+    # 3. Standard error for the qPCR ratio (propagate error)
+    ster_ratio_qpcr = abs(Cell_ratio_qpcr) * sqrt((fungi_se / fungi_mean)^2 + (bacteria_se / bacteria_mean)^2),
+    
+    # 4. Carbon ratio by qPCR, scaled by cell size
+    carbon_ratio_qpcr = (fungi_mean * 6469) / (bacteria_mean * 10),
+    # 5. SE for the carbon ratio (propagate error)
+    ster_carbon_qpcr = abs(carbon_ratio_qpcr) * sqrt((fungi_se / fungi_mean)^2 + (bacteria_se / bacteria_mean)^2)
+  ) %>%
+  ungroup() %>%
+  select(
+    -fungi_qpcr_vec, -bacteria_qpcr_vec, -fungi_mean, -bacteria_mean, -fungi_se, -bacteria_se
+  )
+
+# ----------------- Prepare long data for plotting -----------------
+plotdata_both <- metadata_AS %>%
+  mutate(ster_ratio_enum = NA_real_) %>%
+  select(Sample, Cell_ratio_enum, ster_ratio_enum, Cell_ratio_qpcr, ster_ratio_qpcr) %>%
+  pivot_longer(
+    cols = c(Cell_ratio_enum, Cell_ratio_qpcr, ster_ratio_enum, ster_ratio_qpcr),
+    names_to = c("Metric", "Method"),
+    names_pattern = "(Cell_ratio|ster_ratio)_(enum|qpcr)",
+    values_to = "Value"
+  ) %>%
+  pivot_wider(
+    names_from = Metric,
+    values_from = Value,
+    values_fn = mean          # ensure no duplicate rows per (Sample, Method)
+  ) %>%
+  mutate(
+    Method = recode(Method, qpcr = "qPCR cell ratio", enum = "Enumeration cell ratio"),
+    Cell_ratio = as.numeric(Cell_ratio),
+    ster_ratio = as.numeric(ster_ratio)
+  ) %>%
+  filter(!is.na(Cell_ratio))
+
+plotdata_both$Method <- factor(
+  plotdata_both$Method,
+  levels = c("qPCR cell ratio", "Enumeration cell ratio")
+)
+plotdata_both$Sample <- factor(plotdata_both$Sample, levels = site_order)
+
+## Shared axis limits for both plots, so they're visually comparable
+
+
+# ----------------- Enumeration plot (no SE bar, just dot) -----------------
+
+enum_df   <- filter(plotdata_both, Method == "Enumeration cell ratio")
+mean_enum <- mean(enum_df$Cell_ratio, na.rm = TRUE)
+med_enum  <- median(enum_df$Cell_ratio, na.rm = TRUE)
+
+enum_plot <- ggplot(enum_df, aes(x = Cell_ratio, y = Sample)) +
+  geom_point(size = 5, color = "black") +
+  geom_vline(xintercept = mean_enum, color = "red", linetype = "dashed", size = 1.3) +
+  geom_vline(xintercept = med_enum, color = "red", linetype = "solid", size = 1.3) +
+  labs(
+    title = NULL,
+    x = "Fungal: Total Microbial Cell (Enumeration)",
+    y = "BNG Well"
+  ) +
+  scale_x_continuous(
+    expand = expansion(mult = c(0.12, 0.05))
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border     = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.title.x     = element_text(size = 18, color = "black"),
+    axis.title.y     = element_text(size = 18, color = "black"),
+    axis.text.x      = element_text(size = 16, color = "black"),
+    axis.text.y      = element_text(size = 16, color = "black"),
+    axis.ticks.x     = element_blank(),
+    axis.ticks.y     = element_blank(),
+    legend.title     = element_text(size = 18),
+    legend.text      = element_text(size = 16),
+    legend.key.size  = grid::unit(1.2, "cm"),
+    plot.margin      = margin(5, 5, 5, 5)
+  )
+#enum_plot
+
+# > med_enum [1] 0.06986329 > mean_enum [1] 0.07040717
+# ----------------- qPCR plot (with SE error bars) -----------------
+# Filter only rows with a valid cell ratio to show dots for every site with data
+qpcr_df <- plotdata_both %>%
+  filter(Method == "qPCR cell ratio") %>%
+  filter(!is.na(Cell_ratio))
+
+# Calculate mean and median across all available ratios for the line overlays
+mean_qpcr <- mean(qpcr_df$Cell_ratio, na.rm = TRUE)
+med_qpcr  <- median(qpcr_df$Cell_ratio, na.rm = TRUE)
+
+# Determine a suitable axis limit to cover all ratios and their error bars
+max_x <- max(qpcr_df$Cell_ratio + ifelse(is.na(qpcr_df$ster_ratio), 0, qpcr_df$ster_ratio), na.rm = TRUE) * 1.1
+
+# Plot: point for each ratio, error bar only if SE is present, mean & median lines
+qpcr_plot <- ggplot(qpcr_df, aes(x = Cell_ratio, y = Sample)) +
+  geom_point(size = 5, color = "black") +
+  geom_errorbarh(
+    data = subset(qpcr_df, !is.na(ster_ratio)),
+    aes(xmin = Cell_ratio - ster_ratio, xmax = Cell_ratio + ster_ratio),
+    height = 0.2, color = "black", linewidth = 1.1
+  ) +
+  geom_vline(xintercept = mean_qpcr, color = "red", linetype = "dashed", size = 1.3) +
+  geom_vline(xintercept = med_qpcr, color = "red", linetype = "solid", size = 1.3) +
+  labs(
+    title = NULL,
+    x = "Fungal: Bacterial Cell (qPCR)",
+    y = "BNG Well"
+  ) +
+  scale_x_continuous(
+    expand = expansion(mult = c(0.12, 0.05))
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border     = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.title.x     = element_text(size = 18, color = "black"),
+    axis.title.y     = element_text(size = 18, color = "black"),
+    axis.text.x      = element_text(size = 16, color = "black"),
+    axis.text.y      = element_text(size = 16, color = "black"),
+    axis.ticks.x     = element_blank(),
+    axis.ticks.y     = element_blank(),
+    legend.title     = element_text(size = 18),
+    legend.text      = element_text(size = 16),
+    legend.key.size  = grid::unit(1.2, "cm"),
+    plot.margin      = margin(5, 5, 5, 5)
+  )
+
+qpcr_plot
+
+# > med_qpcr [1] 0.0003274277 > mean_qpcr [1] 0.0004708453
+# ----------------- carbon ratio -----------------
+plotdata_C_qpcr <- metadata_AS %>%
+  select(Sample, carbon_ratio_qpcr, ster_carbon_qpcr) %>%
+  filter(!is.na(carbon_ratio_qpcr)) %>%
+  mutate(Sample = factor(Sample, levels = site_order))
+
+mean_c_qpcr   <- mean(plotdata_C_qpcr$carbon_ratio_qpcr, na.rm = TRUE)
+median_c_qpcr <- median(plotdata_C_qpcr$carbon_ratio_qpcr, na.rm = TRUE)
+
+max_x <- max(plotdata_C_qpcr$carbon_ratio_qpcr + ifelse(is.na(plotdata_C_qpcr$ster_carbon_qpcr), 0, plotdata_C_qpcr$ster_carbon_qpcr), na.rm = TRUE) * 1.1
+
+carbon_qpcr_plot <- ggplot(plotdata_C_qpcr, aes(x = carbon_ratio_qpcr, y = Sample)) +
+  geom_point(size = 5, color = "black") +
+  geom_errorbarh(
+    aes(xmin = carbon_ratio_qpcr - ster_carbon_qpcr,
+        xmax = carbon_ratio_qpcr + ster_carbon_qpcr),
+    height = 0.2, color = "black", linewidth = 1.1,
+    na.rm = TRUE       # so only plots error bars if SE is present
+  ) +
+  geom_vline(xintercept = mean_c_qpcr, color = "red",   linetype = "dashed", size = 1.3) +
+  geom_vline(xintercept = median_c_qpcr, color = "red", linetype = "solid", size = 1.3) +
+  labs(
+    x = "Fungal: Bacterial Carbon",
+    y = "BNG Well"
+  ) +
+  scale_x_continuous(
+    expand = expansion(mult = c(0.12, 0.05)),
+    limits = c(0, max_x)
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border     = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.title.x     = element_text(size = 18, color = "black"),
+    axis.title.y     = element_text(size = 18, color = "black"),
+    axis.text.x      = element_text(size = 16, color = "black"),
+    axis.text.y      = element_text(size = 16, color = "black"),
+    axis.ticks.x     = element_blank(),
+    axis.ticks.y     = element_blank(),
+    legend.title     = element_text(size = 18),
+    legend.text      = element_text(size = 16),
+    legend.key.size  = grid::unit(1.2, "cm"),
+    plot.margin      = margin(5, 5, 5, 5)
+  )
+
+carbon_qpcr_plot
+
+
+# > median_c_qpcr [1] 0.211813 > mean_c_qpcr [1] 0.3045898
+
+# ----------------- Depth vs fungal vs total abundance -----------------
+
+# Prepare dataframe with clear names
+enum_abundane_df <- metadata_AS %>%
+  select(Depth = Depth..m., 
+         Fungal = Fungal_Abundance.cells.mL., 
+         Total = Total.Microbial.Abundance..cells.mL.)
+
+# Scaling factor
+scale_factor <- max(enum_abundane_df$Fungal, na.rm = TRUE) / max(enum_abundane_df$Total, na.rm = TRUE)
+
+depth_fungi_total_dual <- ggplot(enum_abundane_df, aes(x = Depth)) +
+  # Fungal abundance (primary y-axis, green)
+  geom_line(aes(y = Fungal), color = "forestgreen", size = 1.2, linetype = "dashed") +
+  geom_point(aes(y = Fungal), color = "forestgreen", size = 3) +
+  
+  # Total abundance (secondary y-axis, black, scaled)
+  geom_line(aes(y = Total * scale_factor), color = "black", size = 1.2, linetype = "dashed") +
+  geom_point(aes(y = Total * scale_factor), color = "black", size = 3) +
+  
+  scale_y_continuous(
+    name = "Fungal Abundance (cells/mL)",
+    labels = scales::scientific,
+    sec.axis = sec_axis(~./scale_factor, name = "Total Abundance (cells/mL)", labels = scales::scientific)
+  ) +
+  scale_x_continuous(name = "Depth Below Surface (m)") +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border     = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.title.x     = element_text(size = 18, color = "black"),
+    axis.title.y.left  = element_text(color = "forestgreen", size = 18),
+    axis.title.y.right = element_text(color = "black", size = 18),
+    axis.text.x      = element_text(size = 16, color = "black"),
+    axis.text.y.left  = element_text(size = 16, color = "forestgreen"),
+    axis.text.y.right = element_text(size = 16, color = "black"),
+    axis.ticks.x     = element_blank(),
+    axis.ticks.y     = element_blank(),
+    legend.position  = "none",
+    plot.margin      = margin(5, 5, 5, 5)
+  )
+
+depth_fungi_total_dual
+
+
+
+# ----------------- NPDOC vs fungal vs total abundance -----------------
+abundance_npdoc_long <- metadata_AS %>%
+  select(NPDOC, Fungal_Abundance.cells.mL., Total.Microbial.Abundance..cells.mL.) %>%
+  pivot_longer(
+    cols = c(Fungal_Abundance.cells.mL., Total.Microbial.Abundance..cells.mL.),
+    names_to = "AbundanceType",
+    values_to = "Abundance"
+  ) %>%
+  mutate(
+    AbundanceType = ifelse(AbundanceType == "Fungal_Abundance.cells.mL.", "Fungal", "Total")
+  ) %>%
+  filter(!is.na(NPDOC), !is.na(Abundance))
+
+
+fungi_enum <- abundance_npdoc_long %>% filter(AbundanceType == "Fungal")
+total_enum <- abundance_npdoc_long %>% filter(AbundanceType == "Total")
+
+# Calculate scale factor for secondary y axis
+scale_factor <- max(fungi_enum$Abundance, na.rm = TRUE) / max(total_enum$Abundance, na.rm = TRUE)
+
+npdoc_plot <- ggplot() +
+  # Fungal (primary y-axis, green, dashed)
+  geom_line(data = fungi_enum, aes(x = NPDOC, y = Abundance),
+            color = "forestgreen", size = 1.2, linetype = "dashed") +
+  geom_point(data = fungi_enum, aes(x = NPDOC, y = Abundance),
+             color = "forestgreen", size = 3) +
+  # Total (secondary y-axis, black, solid)
+  geom_line(data = total_enum, aes(x = NPDOC, y = Abundance * scale_factor),
+            color = "black", size = 1.2) +
+  geom_point(data = total_enum, aes(x = NPDOC, y = Abundance * scale_factor),
+             color = "black", size = 3) +
+  scale_y_continuous(
+    name = "Fungal Enumeration (cells/mL)",
+    labels = scales::scientific,
+    sec.axis = sec_axis(~./scale_factor, name = "Total Enumeration (cells/mL)", labels = scales::scientific)
+  ) +
+  scale_x_continuous(name = "NPDOC (mg/L)") +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border     = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.line        = element_blank(),
+    legend.position  = "none",
+    axis.title.y.left  = element_text(color = "forestgreen", size = 18),
+    axis.title.y.right = element_text(color = "black", size = 18),
+    axis.title.x      = element_text(size = 18, color = "black"),
+    axis.text.x       = element_text(size = 16, color = "black"),
+    axis.text.y.left  = element_text(size = 16, color = "forestgreen"),
+    axis.text.y.right = element_text(size = 16, color = "black"),
+    axis.ticks.x      = element_blank(),
+    axis.ticks.y      = element_blank(),
+    plot.margin       = margin(5, 5, 5, 5)
+  )
+
+npdoc_plot
+
+# Fungal abundance vs NPDOC
+spearman_fungal <- cor.test(metadata_AS$Fungal_Abundance.cells.mL., metadata_AS$NPDOC, method = "spearman", use = "complete.obs")
+
+# Total abundance vs NPDOC
+spearman_total <- cor.test(metadata_AS$Total.Microbial.Abundance..cells.mL., metadata_AS$NPDOC, method = "spearman", use = "complete.obs")
+
+# View results
+spearman_fungal
+spearman_total
+
+spearman_fungi_total <- cor.test(
+  metadata_AS$Fungal_Abundance.cells.mL.,
+  metadata_AS$Total.Microbial.Abundance..cells.mL.,
+  method = "spearman",
+  use = "complete.obs"
+)
+
+# View results
+spearman_fungi_total
+
+
+# ----------------- combine abundance plots -----------------
+#Combine plots
+combined_plot_abundance <- (depth_fungi_total_dual | npdoc_plot) / 
+  (enum_plot | qpcr_plot | plot_spacer()) /   # Big empty right space on C row!
+  (carbon_qpcr_plot | plot_spacer()) +        # D only on bottom left
+  plot_layout(
+    nrow = 4,
+    heights = c(1, 1, 1, 1)   # Adjust as you like
+  ) +
+  plot_annotation(
+    tag_levels = list(c("(A)", "(B)", "(C) 1.", "(C) 2.", "(D)")),
+    tag_prefix = "",
+    tag_suffix = "",
+    theme = theme(
+      plot.tag = element_text(size = 30, face = "bold")
+    )
+  ) &
+  theme(
+    plot.tag = element_text(size = 30, face = "bold"),
+    plot.margin = margin(5, 5, 5, 5)
+  )
+
+ggsave("combined_plot_abundance.pdf",
+       plot = combined_plot_abundance,
+       width = 20, height = 16, units = "in", device = "pdf", limitsize = FALSE)
+
+
 
 #### Rank Abundance Plot ####
-
+#I did not include this is final paper
 # Set row names of rarified OTU table to OTU IDs (first column), then remove the OTU ID column
 rownames(OTU_table_ITS_meta_rarified) <- OTU_table_ITS_meta_rarified[[1]]  
 OTU_table_ITS_meta_rarified <- OTU_table_ITS_meta_rarified[, -1]  
@@ -1752,8 +3072,9 @@ rank_abund_manuscript <- ggplot(rank_abundance_top50_df, aes(x = Rank, y = Abund
     max.overlaps = Inf
   )
 
-# Save manuscript-ready plot
+# Save plot
 ggsave("rank_abund_manuscript.pdf", plot = rank_abund_manuscript, width = 12, height = 8)
+
 
 
 
