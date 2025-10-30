@@ -58,7 +58,7 @@ qiime demux summarize \
 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 RESULTS: 
 - For both forward and reverse primers. Have identical numbers, which makes sense
--Total reads: 65890, mean: 59831.526, median: 68827.0
+-Total reads: 1136789, mean: 59831.526, median: 68827.0
 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 
