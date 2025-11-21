@@ -5,7 +5,6 @@
 library(Polychrome)
 library(scales)
 library(broom)
-library(Cairo)
 library(ggrastr)
 library(ggtree)
 library(ape)
@@ -385,6 +384,7 @@ class_levels <- as.character(class_levels[!is.na(class_levels)])  # Remove NA en
 palette_24_named <- setNames(createPalette(length(class_levels), c("#ffffff", "#000000")),
                              class_levels)
 
+
 #### Stacked Bar Plots: 18S rRNA Data ####
 
 # ----- Prepare Metadata for 18S Analysis ####
@@ -564,6 +564,9 @@ euk_class <- plot_bar(physeq_18s_euk_class, x = "sample_Sample", fill = "Class")
   )
 
 #ggsave("18s_microeuk_class_stacked_barplot.jpg", plot = euk_class, width = 16, height = 12, dpi = 1000)
+
+
+
 
 
 
@@ -1685,6 +1688,29 @@ shannon <- diversity(shannon_otu_rarefied, index = "shannon")
 metadata_ITS$Shannon <- shannon[match(metadata_ITS$Sample, names(shannon))]
 
 
+
+#### 16s vs ITS richness ####
+ITS_vs_16s_rich <- ggplot(metadata_AS, aes(x = Chao1_16S_total, y = Chao1_fungi)) +
+  geom_point(color = "black", size = 3) +
+  geom_smooth(method = "lm", color = "black", se = TRUE, linetype = "solid", size = 1.2) +
+  labs(
+    x = "Bacterial + Archaeal ASV Richness",
+    y = "Fungal OTU Richness",
+    title = ""
+  ) +
+  theme_minimal(base_size = 15) +
+  theme(
+    axis.title.y = element_text(color = "forestgreen", size = 15),
+    axis.title.x = element_text(color = "black", size = 15),
+    axis.text.x = element_text(color = "black", size = 12),
+    axis.text.y = element_text(color = "black", size = 12),
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    panel.background = element_blank(),
+    legend.position = "none"
+  )
+
+ITS_vs_16s_rich
 #----Combined plot -----
 # Get ranges
 decay_df <- merge(decay_df_ITS, decay_df_16s, 
@@ -1740,29 +1766,30 @@ summary(lm_16S)
 spearman_ITS <- cor.test(decay_df$Geo_Distance_km, decay_df$Bray_Curtis_Similarity_ITS, method = "spearman")
 spearman_16S <- cor.test(decay_df$Geo_Distance_km, decay_df$Bray_Curtis_Similarity_16S, method = "spearman")
 
-spearman_ITS
-spearman_16S
 
 
 ##### Combined Community Plot #####
 #make plots without legends
 dual_richness_plot_nolegend <- dual_richness_plot + theme(legend.position = "none")
-shannon_plot_nolegend <- shannon_plot + theme(legend.position = "none")
-evenness_plot_nolegend <- evenness_plot + theme(legend.position = "none")
-combined_decay_nolegend <- combined_decay + theme(legend.position = "none")
+shannon_plot_nolegend      <- shannon_plot + theme(legend.position = "none")
+evenness_plot_nolegend     <- evenness_plot + theme(legend.position = "none")
+combined_decay_nolegend    <- combined_decay + theme(legend.position = "none")
 
-# 1. Extract the legend from one of the plots
+# Extract legend (from one plot is enough)
 legend_grob <- cowplot::get_legend(
-  dual_richness_plot + theme(legend.position = "bottom")  # position doesn't matter for extraction
+  dual_richness_plot + theme(legend.position = "bottom")
 )
 
-combined_community_plots <- (
-  (dual_richness_plot_nolegend + shannon_plot_nolegend) /
-    (evenness_plot_nolegend + combined_decay_nolegend) /
-    wrap_elements(legend_grob)
-) +
+# Build the layout
+combined_community_plots <-
+  (
+    (dual_richness_plot_nolegend + ITS_vs_16s_rich) /
+      (evenness_plot_nolegend + shannon_plot_nolegend) /
+      combined_decay_nolegend
+  ) /
+  wrap_elements(legend_grob) +
   plot_annotation(
-    tag_levels = list(c("(A)", "(B)", "(C)", "(D)")),
+    tag_levels = list(c("(A)", "(B)", "(C)", "(D)", "(E)")),
     theme = theme(
       plot.title = element_text(size = 16, face = "bold"),
       plot.tag = element_text(size = 30, face = "bold")
@@ -1770,11 +1797,11 @@ combined_community_plots <- (
   ) &
   theme(plot.title.position = "plot")
 
-# Apply row heights
-combined_community_plots <- combined_community_plots + 
-  plot_layout(heights = c(1, 1, 0.1))
+# Specify patchwork layout heights
+combined_community_plots <- combined_community_plots +
+  plot_layout(heights = c(1, 1, 1, 0.1))
 
-# 3. Print or save
+# Print or save
 print(combined_community_plots)
 
 
@@ -1785,33 +1812,10 @@ print(combined_community_plots)
   
 #### Test Relationships between variables ####
 
-# Select only numeric columns
-numeric_data <- metadata_AS[, sapply(metadata_AS, is.numeric)]
-
-# Initialize matrices to store p-values and correlations
-n <- ncol(numeric_data)
-p_values <- matrix(NA, n, n, dimnames = list(colnames(numeric_data), colnames(numeric_data)))
-cor_values <- matrix(NA, n, n, dimnames = list(colnames(numeric_data), colnames(numeric_data)))
-
-# Run pairwise cor.test with Spearman method
-for(i in 1:n){
-  for(j in i:n){
-    test <- cor.test(numeric_data[[i]], numeric_data[[j]], method = "spearman", exact = FALSE)
-    cor_values[i,j] <- cor_values[j,i] <- test$estimate
-    p_values[i,j] <- p_values[j,i] <- test$p.value
-  }
-}
-View(p_values)
-View(cor_values)
-
 
 cor.test(metadata_AS$Total.Microbial.Abundance..cells.mL., metadata_AS$NPDOC, method = "spearman", conf.level = 0.95)
 
 
-# Or use the skimr package for a cleaner summary
-install.packages("skimr")
-library(skimr)
-skim(metadata_AS[, c("Total.Microbial.Abundance..cells.mL.", "NPDOC")])
 #### Metacoder/ Core Microbiome ####
 #### Metacoder ITS ####
 # only keep fungi
@@ -2872,8 +2876,8 @@ spearman_fungal <- cor.test(metadata_AS$Fungal_Abundance.cells.mL., metadata_AS$
 spearman_total <- cor.test(metadata_AS$Total.Microbial.Abundance..cells.mL., metadata_AS$NPDOC, method = "spearman", use = "complete.obs")
 
 # View results
-spearman_fungal
-spearman_total
+spearman_fungal #p-value = 0.6583,rho 0.2571429 
+spearman_total #p-value = 0.05833,rho 0.8285714 
 
 spearman_fungi_total <- cor.test(
   metadata_AS$Fungal_Abundance.cells.mL.,
@@ -2915,7 +2919,7 @@ ggsave("combined_plot_abundance.pdf",
 
 
 #### Rank Abundance Plot ####
-#I did not include this is final paper
+
 # Set row names of rarified OTU table to OTU IDs (first column), then remove the OTU ID column
 rownames(OTU_table_ITS_meta_rarified) <- OTU_table_ITS_meta_rarified[[1]]  
 OTU_table_ITS_meta_rarified <- OTU_table_ITS_meta_rarified[, -1]  
@@ -3072,10 +3076,142 @@ rank_abund_manuscript <- ggplot(rank_abundance_top50_df, aes(x = Rank, y = Abund
     max.overlaps = Inf
   )
 
-# Save plot
+# Save manuscript-ready plot
 ggsave("rank_abund_manuscript.pdf", plot = rank_abund_manuscript, width = 12, height = 8)
 
 
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+# Option 1: Plot total 16S richness vs fungal richness
+ITS_vs_16s_rich <- ggplot(metadata_AS, aes(x = Chao1_16S_total, y = Chao1_fungi)) +
+  geom_point(size = 3, color = "purple") +
+  geom_smooth(method = "lm", color = "black", se = TRUE) +
+  labs(
+    x = "Total 16S (Bacterial + Archaeal) ASV Richness",
+    y = "Fungal OTU (ITS) Richness",
+    title = "Total 16S Richness vs. Fungal Richness"
+  ) +
+  theme_minimal(base_size = 15)
+
+ggsave("ITS_vs_16s_rich.pdf",
+        plot = ITS_vs_16s_rich,
+        width = 8, height = 6, units = "in", device = "pdf", limitsize = FALSE)
+
+
+
+total_vs_fun_enum <- ggplot(metadata_AS, aes(x = Total.Microbial.Abundance..cells.mL., y = Fungal_Abundance.cells.mL.)) +
+  geom_point(size = 3, color = "darkred") +
+  geom_smooth(method = "lm", color = "black", linetype = "dashed", se = TRUE) +
+  labs(
+    x = "Total Enumeration (cells/ml or log10 scale)",
+    y = "Fungal Enumeration (cells/ml or log10 scale)",
+    title = "Total vs. Fungal Enumeration"
+  ) +
+  theme_minimal(base_size = 15)
+
+total_vs_fun_enum
+ggsave2("total_vs_fun_enum.pdf",
+        plot = total_vs_fun_enum,
+        width = 8, height = 6, units = "in", device = "pdf", limitsize = FALSE)
+
+
+
+ggplot(metadata_AS, aes(x = Cell_ratio_qpcr, y = Depth..m.)) +
+  geom_point(size = 3, color = "navy") +
+  geom_smooth(method = "lm", color = "black", se = TRUE, linetype = "dashed") +
+  scale_y_reverse(name = "Depth Below Surface (m)") +  # Shallow at top, deep at bottom
+  labs(
+    x = "Cell Ratio (qPCR; e.g. Fungi/Bacteria)",
+    title = "Cell Ratio (qPCR) vs Depth"
+  ) +
+  theme_minimal(base_size = 16)
+
+ggsave2("cell_ratio_vs_depth.pdf",
+        plot = last_plot(),
+        width = 8, height = 6, units = "in", device = "pdf", limitsize = FALSE)
+
+
+
+
+res1 <- cor.test(metadata_AS$Chao1_16S_total, metadata_AS$Chao1_fungi, method = "spearman")
+cat("Total 16S richness vs Fungal richness:\n")
+cat(sprintf("  Spearman rho = %.3f, p-value = %.3g\n", res1$estimate, res1$p.value))
+
+
+
+res2 <- cor.test(metadata_AS$Cell_ratio_qpcr, metadata_AS$Depth..m., method = "spearman")
+cat("ratio vs depth:\n")
+cat(sprintf("  Spearman rho = %.3f, p-value = %.3g\n", res3$estimate, res3$p.value))
+
+
+
+res3 <- cor.test(metadata_AS$Total.Microbial.Abundance..cells.mL., metadata_AS$Fungal_Abundance.cells.mL., method = "spearman")
+cat("Bacterial enumeration vs Fungal enumeration:\n")
+cat(sprintf("  Spearman rho = %.3f, p-value = %.3g\n", res3$estimate, res3$p.value))
+
+
+
+
+
+
+# Load your data
+metadata <- read.csv("metadata_AS.csv", stringsAsFactors = FALSE)
+
+# Select numeric columns
+numdata <- metadata_AS[sapply(metadata_AS, is.numeric)]
+
+# Get all unique variable pairs
+pair_mat <- combn(names(numdata), 2, simplify = TRUE)
+
+# Create an empty results data frame
+res_list <- list()
+
+for(i in seq_len(ncol(pair_mat))) {
+  var1 <- pair_mat[1, i]
+  var2 <- pair_mat[2, i]
+  x <- numdata[[var1]]
+  y <- numdata[[var2]]
+  keep <- complete.cases(x, y)
+  N <- sum(keep)
+  if (N >= 3) {
+    ct <- cor.test(x[keep], y[keep], method = "spearman")
+    res_list[[i]] <- data.frame(
+      Variable1 = var1,
+      Variable2 = var2,
+      Spearman_rho = unname(ct$estimate),
+      p_value = ct$p.value,
+      N = N
+    )
+  } else {
+    res_list[[i]] <- data.frame(
+      Variable1 = var1,
+      Variable2 = var2,
+      Spearman_rho = NA,
+      p_value = NA,
+      N = N
+    )
+  }
+}
+
+# Combine into a single data frame
+spearman_table <- do.call(rbind, res_list)
+
+# Print as nice table
+View(spearman_table)
+
+# Optional: view as spreadsheet-style popup
+# View(spearman_table)
+
+# Optional: save to CSV
