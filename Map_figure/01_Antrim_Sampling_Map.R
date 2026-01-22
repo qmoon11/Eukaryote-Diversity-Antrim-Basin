@@ -1,4 +1,4 @@
-# This script creates a map of the Antrim Shale outcrop area in Michigan, USA, showing sampling sites and geological features.
+# This script creates a map (Figure 1) of the Antrim Shale outcrop area in Michigan, USA, showing sampling sites and geological features.
 
 #### Load libraries ####
 library(sf)
@@ -216,7 +216,7 @@ combined_plot <- ggdraw() +
   draw_line(x = c(0.50, 0.6653), y = c(0.70, 0.7394), color = "red", size = 0.5) +  # top-left
   draw_line(x = c(0.5023, 0.6653), y = c(0.647, 0.315), color = "red", size = 0.5)   # bottom-left
 
-#combined_plot
+combined_plot
 
 ggsave("Antrim_Sampling_Map_combined.pdf", plot = combined_plot, width = 21, height = 8)
 
