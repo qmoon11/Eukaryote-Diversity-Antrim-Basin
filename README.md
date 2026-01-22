@@ -1,7 +1,7 @@
 # Eukaryote-Diversity-Antrim-Basin
 Project Overview:
 
-This project investigates how eukaryotic microbial communities, with a focus on fungi, vary across depth and salinity gradients in the deep subsurface of the Antrim Basin. We analyze sequencing data alongside geochemical metadata to understand how eukaryote composition changes in this environment.
+This project investigates how eukaryotic microbial communities, with a focus on fungi, vary across depth and salinity gradients in the deep subsurface of the Antrim Basin. We analyze sequencing data alongside geochemical metadata to understand how eukaryote composition influences carbon cycling.
 
 Repository Contents:
 
