@@ -1,4 +1,4 @@
-
+#This script was used to first try assigning taxonomy with standard DADA2 approaches, however it returned very low assingment compared to the custom Unite search
 library(dada2)
 library(Biostrings)
 library(R.utils)
