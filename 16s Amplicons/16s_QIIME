@@ -133,10 +133,6 @@ RESULTS:
 #Download SILVA 138 99% OTUs full-length sequences
 wget https://data.qiime2.org/2024.10/common/silva-138-99-seqs.qza
 
-#Download SILVA 138 99% taxonomy:
-wget https://data.qiime2.org/2024.10/common/silva-138-99-tax.qza
-
-
 #extract just v4 region, using primers used in the study (Walters 2015)
 qiime feature-classifier extract-reads \
   --i-sequences silva-138-99-seqs.qza \
