@@ -120,7 +120,7 @@ qiime feature-table summarize \
 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 RESULTS: 
 -Number of samples: 19
--Number of 99% ASV:  6,099
+-Number of 100% ASV:  6,099
 -Total frequency of OTUs: 690,723
 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
